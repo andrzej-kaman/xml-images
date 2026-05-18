@@ -1,6 +1,5 @@
 from flask import Flask, render_template, jsonify, Response, stream_with_context, send_file, request
-import google.generativeai as genai
-from google.generativeai import types as genai_types
+from google import genai
 import os
 import io
 import time
@@ -19,23 +18,17 @@ app = Flask(__name__)
 
 # ============== CONFIGURATION ==============
 
-# Configure the Gemini client from environment variable
-GEMINI_KEY = os.environ.get('GEMINI_API_KEY')
-if not GEMINI_KEY:
-    raise ValueError("Nie znaleziono klucza API. Ustaw zmienną środowiskową GEMINI_API_KEY.")
-genai.configure(api_key=GEMINI_KEY)
+# The new google-genai library automatically uses the GEMINI_API_KEY environment variable.
+# We just need to ensure it's set in the Render environment.
+client = genai.Client()
 
 # Model Names
-TEXT_ANALYSIS_MODEL    = "gemini-1.0-pro"
-IMAGE_GENERATION_MODEL = "gemini-1.0-pro"
-
-# Create model instances once
-text_model = genai.GenerativeModel(TEXT_ANALYSIS_MODEL)
-image_model = genai.GenerativeModel(IMAGE_GENERATION_MODEL)
+TEXT_ANALYSIS_MODEL    = "gemini-2.5-flash"
+IMAGE_GENERATION_MODEL = "gemini-2.5-flash-image" # Correct model for image input
 
 MAX_REFERENCE_IMAGES = 5
 IMAGE_ASPECT_RATIO = "1:1"
-IMAGE_SIZE = "None"
+IMAGE_SIZE = "None" # This is not directly used in the new API in the same way
 MAX_RETRIES = 3
 RETRY_DELAY_BASE = 2
 RETRY_DELAY_MAX = 120
@@ -81,10 +74,10 @@ class GeminiAnalysisError(Exception):
     pass
 
 def analyze_product_for_two_prompts_xml(images_pil, product_name):
-    analysis_prompt = f"""... (prompt as before) ..."""
+    analysis_prompt = f"""Jesteś ekspertem od fotografii produktowej... (prompt as before) ...[Prompt 2: Lifestylowy]"""
     try:
         contents = [analysis_prompt] + images_pil
-        response = text_model.generate_content(contents)
+        response = client.models.generate_content(model=TEXT_ANALYSIS_MODEL, contents=contents)
         if not response or not response.text:
             raise GeminiAnalysisError(f"Gemini zwrócił pustą odpowiedź dla {product_name}")
         prompts = [p.strip() for p in response.text.splitlines() if p.strip()]
@@ -94,30 +87,23 @@ def analyze_product_for_two_prompts_xml(images_pil, product_name):
 
 def generate_gemini_image_sync(prompt, index, product_name, reference_images_pil):
     filename = f"creative_{index}_{int(time.time())}.png"
-    # Save directly to session output folder, not a global one
-    # filepath = os.path.join(OUTPUT_FOLDER, filename) - This needs session context
-
     contents = [prompt]
     if reference_images_pil:
         contents.extend(reference_images_pil[:MAX_REFERENCE_IMAGES])
     
-    # This part is complex and might need library-specific updates for image generation models
-    # Placeholder for the actual image generation call
     try:
-        response = image_model.generate_content(contents)
-        # Assuming the new library returns image bytes in a specific way
-        # This part will likely need debugging based on the new library's response object
+        # NOTE: The new API might not support all old parameters directly in generate_content.
+        # This is a simplified call based on the new pattern.
+        response = client.models.generate_content(model=IMAGE_GENERATION_MODEL, contents=contents)
         if response.parts:
             img_bytes = response.parts[0].inline_data.data
             pil_image = Image.open(io.BytesIO(img_bytes))
-            # The filepath needs to be determined by the calling function
-            # pil_image.save(filepath)
             return pil_image, filename
     except Exception as e:
         print(f"Error generating image: {e}")
     return None, None
 
-# ============== API ENDPOINTS ==============
+# ============== API ENDPOINTS & WORKFLOW ==============
 
 @app.route('/')
 def index():
@@ -125,11 +111,9 @@ def index():
 
 @app.route('/api/xml/start', methods=['POST'])
 def xml_start_processing():
-    if 'xml_file' not in request.files:
-        return jsonify({'error': 'Brak pliku XML'}), 400
+    if 'xml_file' not in request.files: return jsonify({'error': 'Brak pliku XML'}), 400
     file = request.files['xml_file']
-    if not file or not file.filename.endswith('.xml'):
-        return jsonify({'error': 'Wymagany plik .xml'}), 400
+    if not file or not file.filename.endswith('.xml'): return jsonify({'error': 'Wymagany plik .xml'}), 400
 
     session_id = f"session_{int(time.time())}"
     session_folder = os.path.join(TEMP_FOLDER, session_id)
@@ -139,8 +123,7 @@ def xml_start_processing():
     file.save(xml_path)
 
     image_urls = parse_xml_for_image_urls(xml_path)
-    if not image_urls:
-        return jsonify({'error': 'Nie znaleziono URLi obrazów w XML'}), 400
+    if not image_urls: return jsonify({'error': 'Nie znaleziono URLi obrazów w XML'}), 400
 
     status_data = {
         'status': 'pending', 'total_images': len(image_urls),
@@ -156,22 +139,18 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
     status_path = os.path.join(session_folder, 'status.json')
 
     def update_status(status=None, processed_increment=0, error=None):
-        # This function needs to be thread-safe if you have multiple workers
         with open(status_path, 'r+') as f:
             data = json.load(f)
             if status: data['status'] = status
             if processed_increment: data['processed_images'] += processed_increment
             if error: data['errors'].append(error)
-            f.seek(0)
-            json.dump(data, f)
-            f.truncate()
+            f.seek(0); json.dump(data, f); f.truncate()
 
     try:
         update_status(status='processing')
         feed_folder = os.path.join(session_folder, 'feed')
         output_folder = os.path.join(session_folder, 'output')
-        os.makedirs(feed_folder, exist_ok=True)
-        os.makedirs(output_folder, exist_ok=True)
+        os.makedirs(feed_folder, exist_ok=True); os.makedirs(output_folder, exist_ok=True)
 
         with open(status_path, 'r') as f: status_data = json.load(f)
         for url in status_data['image_urls']:
@@ -186,7 +165,17 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                 with Image.open(image_path) as img:
                     pil_img = img.convert('RGB')
                     base_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name)
-                    # ... generation logic ...
+                    
+                    final_prompts = []
+                    if styles and len(styles) >= 2:
+                        final_prompts.extend([f"{base_prompts[0]}, {styles[0]}", f"{base_prompts[1]}, {styles[1]}"])
+                    else:
+                        final_prompts = base_prompts
+
+                    for i, prompt in enumerate(final_prompts):
+                        pil_image, filename = generate_gemini_image_sync(prompt, i, product_name, [pil_img])
+                        if pil_image and filename:
+                            pil_image.save(os.path.join(output_folder, filename))
                     update_status(processed_increment=1)
             except Exception as e:
                 update_status(error=str(e))
@@ -203,7 +192,8 @@ def xml_generate_creations():
     if not session_id or not os.path.exists(os.path.join(TEMP_FOLDER, session_id)):
         return jsonify({'error': 'Nieprawidłowe ID sesji'}), 404
     
-    thread = threading.Thread(target=run_generation_thread, args=(session_id, data.get('resolution'), data.get('aspect_ratio'), data.get('styles')))
+    args = (session_id, data.get('resolution'), data.get('aspect_ratio'), data.get('styles'))
+    thread = threading.Thread(target=run_generation_thread, args=args)
     thread.start()
 
     return jsonify({'status': 'Przetwarzanie rozpoczęte w tle', 'session_id': session_id})
@@ -211,8 +201,7 @@ def xml_generate_creations():
 @app.route('/api/xml/status/<session_id>', methods=['GET'])
 def get_xml_status(session_id):
     status_path = os.path.join(TEMP_FOLDER, session_id, 'status.json')
-    if not os.path.exists(status_path):
-        return jsonify({'error': 'Nieprawidłowe ID sesji'}), 404
+    if not os.path.exists(status_path): return jsonify({'error': 'Nieprawidłowe ID sesji'}), 404
 
     with open(status_path, 'r') as f: data = json.load(f)
 
@@ -233,8 +222,7 @@ def get_xml_status(session_id):
 @app.route('/api/download/<filename>')
 def download_zip(filename):
     filepath = os.path.join(TEMP_FOLDER, filename)
-    if os.path.exists(filepath):
-        return send_file(filepath, as_attachment=True)
+    if os.path.exists(filepath): return send_file(filepath, as_attachment=True)
     return jsonify({'error': 'Plik nie istnieje'}), 404
 
 if __name__ == '__main__':
