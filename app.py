@@ -60,13 +60,12 @@ def parse_xml_for_image_urls(xml_path):
         return []
 
 
-# ============== LOGIKA AI (GEMINI 2.5) ==============
+# ============== LOGIKA AI ==============
 
 def analyze_product_for_two_prompts_xml(images_pil, product_name):
     """
     Analiza zdjęcia wejściowego przez model Gemini w celu uzyskania 2 promptów.
     WAŻNE: Podmień ten tekst na swój prawdziwy, długi prompt. 
-    Uważaj, żeby zostawić potrójne cudzysłowy na początku i końcu!
     """
     analysis_prompt = """Jesteś ekspertem od fotografii produktowej.
 Przeanalizuj załączone zdjęcie produktu i wygeneruj dokładnie 2 precyzyjne prompty w języku angielskim, służące do wygenerowania nowego tła (lifestyle / aranżacja) dla tego produktu.
@@ -92,48 +91,43 @@ Nie dodawaj żadnych wstępów. Zwróć tylko 2 linijki tekstu, każda z nich to
         raise Exception(f"Błąd analizy Gemini dla '{product_name}': {e}")
 
 
-def generate_gemini_image_sync(prompt, index, product_name):
+def generate_gemini_image_sync(prompt, index, product_name, reference_image):
     """
-    Wywołanie modelu Gemini (gemini-2.5-flash-image) do WYGENEROWANIA obrazu.
-    Korzystamy tu z generate_content() oraz odpowiedniej modalności.
+    Wywołanie modelu Nano Banana do WYGENEROWANIA obrazu.
+    Przekazujemy tu zarówno prompt określający tło/styl, jak i samo zdjęcie produktu z XML.
     """
     safe_product_name = re.sub(r'[^\w\-_\.]', '', product_name)
     filename = f"{safe_product_name}_creative_{index}_{int(time.time())}.jpeg"
     
     try:
+        # PAKIET DANYCH: Wysyłamy tekst (prompt) ORAZ obraz referencyjny produktu w jednej liście `contents`
         response = client.models.generate_content(
             model=IMAGE_GENERATION_MODEL,
-            contents=prompt,
+            contents=[prompt, reference_image],
             config=types.GenerateContentConfig(
-                # Kluczowe ustawienie: informujemy model Gemini, że oczekujemy na wyjściu obrazka
                 response_modalities=["IMAGE"]
             )
         )
         
         img_bytes = None
         
-        # Nowe SDK Google przechowuje wygenerowane obrazy z modeli Gemini w kilku możliwych miejscach
-        # Próba 1: Szukamy we wbudowanej tablicy generated_images
         if hasattr(response, 'generated_images') and response.generated_images:
             img_bytes = response.generated_images[0].image.image_bytes
-            
-        # Próba 2: Szukamy bezpośrednio w strumieniu odpowiedzi (częsty przypadek dla Gemini)
         elif response.candidates and response.candidates[0].content.parts:
             for part in response.candidates[0].content.parts:
                 if hasattr(part, 'inline_data') and part.inline_data:
                     img_bytes = part.inline_data.data
                     break
         
-        # Jeśli udało się wyciągnąć bajty, zapisujemy jako obraz
         if img_bytes:
-            pil_image = Image.open(io.BytesIO(img_bytes))
-            return pil_image, filename
+            generated_pil = Image.open(io.BytesIO(img_bytes))
+            return generated_pil, filename
             
-        print(f"Błąd: Nie znaleziono danych obrazu w odpowiedzi Gemini dla promptu: {prompt}")
+        print(f"Błąd: Nie znaleziono danych obrazu w odpowiedzi Nano Banana dla promptu: {prompt}")
         return None, None
 
     except Exception as e:
-        print(f"Błąd podczas generowania obrazu Gemini: {e}")
+        print(f"Błąd podczas generowania obrazu: {e}")
         return None, None
 
 
@@ -199,7 +193,7 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                 with Image.open(image_path) as img:
                     pil_img = img.convert('RGB')
                     
-                    # 1. Krok: Gemini 2.5 Flash odczytuje obrazek i tworzy prompty
+                    # 1. Krok: Gemini odczytuje obrazek i tworzy prompty
                     base_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name)
                     
                     final_prompts = []
@@ -208,11 +202,11 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                     else:
                         final_prompts = base_prompts
 
-                    # 2. Krok: Gemini 2.5 Flash Image tworzy obrazki
+                    # 2. Krok: Nano Banana tworzy obrazki na podstawie wygenerowanego promptu ORAZ oryginalnego zdjęcia (pil_img)
                     for i, prompt in enumerate(final_prompts):
-                        pil_image, filename = generate_gemini_image_sync(prompt, i, product_name)
-                        if pil_image and filename:
-                            pil_image.save(os.path.join(output_folder, filename))
+                        generated_image, filename = generate_gemini_image_sync(prompt, i, product_name, pil_img)
+                        if generated_image and filename:
+                            generated_image.save(os.path.join(output_folder, filename))
                             
                 update_status(processed_increment=1)
             except Exception as e:
