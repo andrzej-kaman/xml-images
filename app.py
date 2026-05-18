@@ -1,8 +1,8 @@
 from flask import Flask, render_template, jsonify, Response, stream_with_context, send_file, request
 
 # ✅ Jeden nowy SDK do wszystkiego (tekst + obrazy)
-from google import genai
-from google.genai import types as genai_types
+import google.generativeai as genai
+from google.generativeai import types as genai_types
 
 import os
 import io
