@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, Response, send_file, request
+from flask import Flask, render_template, jsonify, Response, send_file, request, after_this_request
 from google import genai
 from google.genai import types
 import os
@@ -11,6 +11,7 @@ from PIL import Image
 import re
 import httpx
 import xml.etree.ElementTree as ET
+import shutil
 
 app = Flask(__name__)
 
@@ -19,13 +20,33 @@ app = Flask(__name__)
 # Automatycznie pobiera klucz z os.environ["GEMINI_API_KEY"]
 client = genai.Client()
 
-# Modele z rodziny Gemini 2.5
+# Modele AI
 TEXT_ANALYSIS_MODEL = "gemini-2.5-flash"
-IMAGE_GENERATION_MODEL = "gemini-2.5-flash-image"
+IMAGE_GENERATION_MODEL = "gemini-3-pro-image-preview" # Nano Banana
 
 # Foldery tymczasowe
-TEMP_FOLDER = os.path.join('/tmp', 'product_processor')
+TEMP_FOLDER = 'temp_files'
 os.makedirs(TEMP_FOLDER, exist_ok=True)
+
+# Definiujemy globalne ustawienia wyłączające filtry bezpieczeństwa (dla obu modeli)
+GLOBAL_SAFETY_SETTINGS = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+]
 
 
 # ============== FUNKCJE POMOCNICZE ==============
@@ -62,12 +83,26 @@ def parse_xml_for_image_urls(xml_path):
 
 # ============== LOGIKA AI ==============
 
-def analyze_product_for_two_prompts_xml(images_pil, product_name):
+def analyze_product_for_two_prompts_xml(images_pil, product_name, styles=None):
     """
-    Analiza zdjęcia wejściowego przez model Gemini w celu uzyskania 2 promptów.
-    WAŻNE: Podmień ten tekst na swój prawdziwy, długi prompt. 
+    Analiza zdjęcia wejściowego z inteligentnym uwzględnieniem stylów użytkownika.
+    Model tworzy gotowe prompty dla Nano Banana.
     """
-    analysis_prompt = """Jesteś ekspertem od fotografii produktowej.
+    if styles and any(styles):
+        style_1 = styles[0] if len(styles) > 0 else ""
+        style_2 = styles[1] if len(styles) > 1 else style_1
+        
+        analysis_prompt = f"""Jesteś ekspertem od fotografii produktowej.
+Przeanalizuj załączone zdjęcie produktu. Następnie stwórz 2 precyzyjne prompty w języku angielskim dla generatora obrazów.
+
+ZASADA: Najpierw dokładnie opisz fizyczny wygląd produktu ze zdjęcia (materiał, kształt, kolory, widoczne etykiety), a następnie umieść ten produkt DOKŁADNIE w takim otoczeniu/stylu:
+- Prompt 1 ma mieć otoczenie: "{style_1}"
+- Prompt 2 ma mieć otoczenie: "{style_2}"
+
+Nie dodawaj żadnych wstępów. Zwróć tylko 2 linijki tekstu, każda z nich to osobny, spójny prompt gotowy do wygenerowania obrazu.
+"""
+    else:
+        analysis_prompt = """Jesteś ekspertem od fotografii produktowej.
 Przeanalizuj załączone zdjęcie produktu i wygeneruj dokładnie 2 precyzyjne prompty w języku angielskim, służące do wygenerowania nowego tła (lifestyle / aranżacja) dla tego produktu.
 
 Wymagania:
@@ -75,11 +110,15 @@ Wymagania:
 2. Drugi prompt ma być lifestylowy, pasujący do zastosowania produktu.
 Nie dodawaj żadnych wstępów. Zwróć tylko 2 linijki tekstu, każda z nich to osobny prompt.
 """
+
     try:
         contents = [analysis_prompt] + images_pil
         response = client.models.generate_content(
             model=TEXT_ANALYSIS_MODEL,
-            contents=contents
+            contents=contents,
+            config=types.GenerateContentConfig(
+                safety_settings=GLOBAL_SAFETY_SETTINGS # Wyłączenie filtrów w analizie
+            )
         )
         
         if not response or not response.text:
@@ -94,30 +133,35 @@ Nie dodawaj żadnych wstępów. Zwróć tylko 2 linijki tekstu, każda z nich to
 def generate_gemini_image_sync(prompt, index, product_name, reference_image):
     """
     Wywołanie modelu Nano Banana do WYGENEROWANIA obrazu.
-    Przekazujemy tu zarówno prompt określający tło/styl, jak i samo zdjęcie produktu z XML.
     """
     safe_product_name = re.sub(r'[^\w\-_\.]', '', product_name)
     filename = f"{safe_product_name}_creative_{index}_{int(time.time())}.jpeg"
     
     try:
-        # PAKIET DANYCH: Wysyłamy tekst (prompt) ORAZ obraz referencyjny produktu w jednej liście `contents`
         response = client.models.generate_content(
             model=IMAGE_GENERATION_MODEL,
             contents=[prompt, reference_image],
             config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"]
+                response_modalities=["IMAGE"],
+                safety_settings=GLOBAL_SAFETY_SETTINGS # Wyłączenie filtrów w generowaniu obrazu
             )
         )
         
         img_bytes = None
         
+        # Bezpieczne sprawdzanie odpowiedzi i szukanie obrazu
         if hasattr(response, 'generated_images') and response.generated_images:
             img_bytes = response.generated_images[0].image.image_bytes
-        elif response.candidates and response.candidates[0].content.parts:
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, 'inline_data') and part.inline_data:
-                    img_bytes = part.inline_data.data
-                    break
+        elif response.candidates:
+            candidate = response.candidates[0]
+            if not candidate.content:
+                print(f"❌ Nano Banana odrzucił generowanie dla: {product_name}")
+                print(f"Powód odrzucenia (finish_reason): {getattr(candidate, 'finish_reason', 'Brak informacji')}")
+            elif candidate.content.parts:
+                for part in candidate.content.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data:
+                        img_bytes = part.inline_data.data
+                        break
         
         if img_bytes:
             generated_pil = Image.open(io.BytesIO(img_bytes))
@@ -166,12 +210,12 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
     session_folder = os.path.join(TEMP_FOLDER, session_id)
     status_path = os.path.join(session_folder, 'status.json')
 
-    def update_status(status=None, processed_increment=0, error=None):
+    def update_status(status=None, processed_increment=0, error_details=None):
         with open(status_path, 'r+') as f:
             data = json.load(f)
             if status: data['status'] = status
             if processed_increment: data['processed_images'] += processed_increment
-            if error: data['errors'].append(error)
+            if error_details: data['errors'].append(error_details)
             f.seek(0); json.dump(data, f); f.truncate()
 
     try:
@@ -182,7 +226,12 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
 
         with open(status_path, 'r') as f: status_data = json.load(f)
         for url in status_data['image_urls']:
-            download_image_from_url(url, feed_folder)
+            if not download_image_from_url(url, feed_folder):
+                update_status(error_details={
+                    'source_url': url,
+                    'message': 'Nie udało się pobrać obrazu z podanego URL.',
+                    'step': 'download'
+                })
         
         image_files = [f for f in os.listdir(feed_folder) if os.path.isfile(os.path.join(feed_folder, f))]
 
@@ -193,16 +242,10 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                 with Image.open(image_path) as img:
                     pil_img = img.convert('RGB')
                     
-                    # 1. Krok: Gemini odczytuje obrazek i tworzy prompty
-                    base_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name)
-                    
-                    final_prompts = []
-                    if styles and len(styles) >= 2:
-                        final_prompts.extend([f"{base_prompts[0]}, {styles[0]}", f"{base_prompts[1]}, {styles[1]}"])
-                    else:
-                        final_prompts = base_prompts
+                    # 1. Krok: Gemini odczytuje obrazek, łączy go ze stylami użytkownika i tworzy gotowe prompty
+                    final_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name, styles)
 
-                    # 2. Krok: Nano Banana tworzy obrazki na podstawie wygenerowanego promptu ORAZ oryginalnego zdjęcia (pil_img)
+                    # 2. Krok: Nano Banana tworzy obrazki na podstawie połączonego promptu ORAZ oryginalnego zdjęcia
                     for i, prompt in enumerate(final_prompts):
                         generated_image, filename = generate_gemini_image_sync(prompt, i, product_name, pil_img)
                         if generated_image and filename:
@@ -210,12 +253,16 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                             
                 update_status(processed_increment=1)
             except Exception as e:
-                update_status(error=str(e))
+                update_status(error_details={
+                    'file': image_file,
+                    'message': str(e),
+                    'step': 'ai_processing'
+                })
         
         update_status(status='complete')
 
     except Exception as e:
-        update_status(status='failed', error=str(e))
+        update_status(status='failed', error_details={'message': str(e), 'step': 'general'})
 
 @app.route('/api/xml/generate', methods=['POST'])
 def xml_generate_creations():
@@ -254,8 +301,38 @@ def get_xml_status(session_id):
 @app.route('/api/download/<filename>')
 def download_zip(filename):
     filepath = os.path.join(TEMP_FOLDER, filename)
-    if os.path.exists(filepath): return send_file(filepath, as_attachment=True)
-    return jsonify({'error': 'Plik nie istnieje'}), 404
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'Plik nie istnieje lub został już usunięty'}), 404
+
+    match = re.search(r'kreacje_(session_\d+)\.zip', filename)
+    if not match:
+        @after_this_request
+        def cleanup_zip(response):
+            try:
+                os.remove(filepath)
+            except OSError as e:
+                print(f"Błąd podczas usuwania pliku zip {filepath}: {e}")
+            return response
+        return send_file(filepath, as_attachment=True)
+
+    session_id = match.group(1)
+    session_folder = os.path.join(TEMP_FOLDER, session_id)
+
+    @after_this_request
+    def cleanup_session_data(response):
+        try:
+            if os.path.exists(session_folder):
+                shutil.rmtree(session_folder)
+                print(f"✅ Usunięto folder sesji: {session_folder}")
+            if os.path.exists(filepath):
+                os.remove(filepath)
+                print(f"✅ Usunięto plik ZIP: {filepath}")
+        except Exception as e:
+            print(f"❌ Wystąpił błąd podczas czyszczenia plików dla sesji {session_id}: {e}")
+        return response
+
+    return send_file(filepath, as_attachment=True)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8003)), debug=False)
+    port = int(os.environ.get('PORT', 8003))
+    app.run(host='0.0.0.0', port=port, debug=False)

@@ -97,32 +97,33 @@ async function handleStylesSubmit() {
 async function pollForStatus() {
     if (!xmlState.sessionId) return;
 
-    console.log('[POLL] Sprawdzam status dla sesji:', xmlState.sessionId);
     try {
         const response = await fetch(`/api/xml/status/${xmlState.sessionId}`);
+        if (!response.ok) {
+            // Spróbuj odczytać błąd JSON, nawet jeśli status nie jest 200 OK
+            try {
+                const errorData = await response.json();
+                throw new Error(errorData.error || `Błąd serwera: ${response.status}`);
+            } catch (jsonError) {
+                throw new Error(`Błąd serwera: ${response.status}`);
+            }
+        }
+
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Błąd pobierania statusu.');
-        console.log('[POLL] Otrzymano dane:', data);
 
         const progress = data.total_images > 0 ? (data.processed_images / data.total_images) * 100 : 0;
-        console.log(`[POLL] Obliczony postęp: ${progress.toFixed(0)}%`);
-
         const progressBar = document.getElementById('xmlProgressFill');
         const statusMessage = document.getElementById('xmlStatusMessage');
         if(progressBar) progressBar.style.width = `${progress.toFixed(0)}%`;
         if(statusMessage) statusMessage.textContent = `Przetworzono ${data.processed_images} z ${data.total_images}`;
-        
-        console.log('[POLL] Pasek postępu zaktualizowany.');
 
         if (data.status === 'complete' || data.status === 'failed') {
-            console.log('[POLL] Status to complete/failed. Zatrzymuję odpytywanie.');
             clearInterval(xmlState.pollInterval);
             xmlState.status = 'complete';
             displayResults(data);
         }
     } catch (err) {
-        console.error('[POLL] Błąd w odpytywaniu:', err);
-        showError(err.message);
+        showError(`Błąd odpytywania o status: ${err.message}. Spróbuj odświeżyć stronę.`);
         clearInterval(xmlState.pollInterval);
     }
 }
@@ -130,14 +131,74 @@ async function pollForStatus() {
 function displayResults(data) {
     showXmlStep('results');
     const downloadSection = document.getElementById('xmlDownloadSection');
+    const errorsSection = document.getElementById('xmlErrorsSection');
+    const errorsList = document.getElementById('xmlErrorsList');
+
+    // Wyczyść poprzednie wyniki
+    downloadSection.innerHTML = '';
+    errorsList.innerHTML = '';
+    errorsSection.style.display = 'none';
+
+    // 1. Wyświetl link do pobrania, jeśli istnieje
     if (data.download_url) {
-        downloadSection.innerHTML = `<a href="${data.download_url}" class="btn neo-button download">Pobierz ZIP</a>`;
+        const downloadLink = document.createElement('a');
+        downloadLink.href = data.download_url;
+        downloadLink.className = 'btn neo-button download';
+        downloadLink.innerHTML = '<span class="btn-icon">📦</span><span class="btn-text">Pobierz ZIP</span>';
+        downloadLink.addEventListener('click', handleDownloadClick);
+        downloadSection.appendChild(downloadLink);
     } else {
-        let errorHTML = '<p class="error-text">Wystąpiły błędy podczas generowania.</p>';
-        if(data.errors && data.errors.length > 0) {
-            errorHTML += `<p>Błędy: ${data.errors.join(', ')}</p>`;
+        downloadSection.innerHTML = '<p class="error-text">Nie wygenerowano plików do pobrania. Sprawdź listę błędów.</p>';
+    }
+
+    // 2. Wyświetl szczegółowe błędy, jeśli wystąpiły
+    if (data.errors && data.errors.length > 0) {
+        errorsSection.style.display = 'block';
+        data.errors.forEach(error => {
+            const li = document.createElement('li');
+            const source = error.file ? `plik <strong>${error.file}</strong>` : (error.source_url ? `URL <strong>${error.source_url}</strong>` : 'przetwarzanie ogólne');
+            li.innerHTML = `Błąd na etapie '${error.step}' dla ${source}: <em>${error.message}</em>`;
+            errorsList.appendChild(li);
+        });
+    }
+}
+
+async function handleDownloadClick(event) {
+    event.preventDefault();
+    const link = event.currentTarget;
+    const url = link.href;
+
+    link.classList.add('disabled');
+    link.querySelector('.btn-text').textContent = 'Pobieranie...';
+
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `Nie udało się pobrać pliku. Status: ${response.status}`);
         }
-        downloadSection.innerHTML = errorHTML;
+
+        const blob = await response.blob();
+        const tempUrl = window.URL.createObjectURL(blob);
+        const tempLink = document.createElement('a');
+
+        const filename = url.substring(url.lastIndexOf('/') + 1);
+        tempLink.href = tempUrl;
+        tempLink.setAttribute('download', filename);
+
+        document.body.appendChild(tempLink);
+        tempLink.click();
+        document.body.removeChild(tempLink);
+        window.URL.revokeObjectURL(tempUrl);
+
+        // Zaktualizuj interfejs po pomyślnym pobraniu
+        link.outerHTML = '<p class="success-text">✅ Plik pobrany! Dane sesji zostały usunięte z serwera.</p>';
+
+    } catch (err) {
+        showError(err.message);
+        // Przywróć przycisk, jeśli pobieranie się nie powiodło
+        link.classList.remove('disabled');
+        link.querySelector('.btn-text').textContent = 'Pobierz ZIP';
     }
 }
 

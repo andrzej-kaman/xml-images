@@ -20,8 +20,7 @@
                 <span class="tab-label">XML Workflow</span>
                 <span class="tab-desc">Główny proces</span>
             </button>
-            <button class="mode-tab" id="tab-upload" onclick="switchMode('')">
-                <!--<button class="mode-tab" id="tab-upload" onclick="switchMode('upload')">-->
+            <button class="mode-tab" id="tab-upload" onclick="switchMode('upload')">
                 <span class="tab-icon">📤</span>
                 <span class="tab-label">Tryb Custom</span>
                 <span class="tab-desc">Dodaj ręcznie</span>
@@ -106,6 +105,12 @@
                 <div id="xml-step-results" style="display:none;">
                     <h3>Krok 5: Gotowe!</h3>
                     <div id="xmlDownloadSection"></div>
+
+                    <!-- Sekcja do wyświetlania błędów przetwarzania -->
+                    <div id="xmlErrorsSection" style="display:none; margin-top: 20px;">
+                        <h4 class="alert-error-title">Wystąpiły problemy podczas przetwarzania niektórych plików:</h4>
+                        <ul id="xmlErrorsList" class="errors-list"></ul>
+                    </div>
                 </div>
             </div>
 
@@ -132,7 +137,6 @@
 
             <!-- ─── SHARED: Error message ────────────────────────────── -->
             <div id="errorMessage" class="alert alert-error" style="display:none;"></div>
-
         </div>
     </div>
 

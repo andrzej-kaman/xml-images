@@ -607,3 +607,59 @@ h1 {
 }
 
 .processing .btn-icon { animation: pulse 1.5s ease-in-out infinite; }
+
+/* ==================== NOWE STYLE DLA OBSŁUGI BŁĘDÓW I POBIERANIA ==================== */
+
+/* Styl dla kontenera z listą błędów */
+.alert-error-title {
+    color: #991b1b;
+    font-weight: 700;
+    margin-bottom: 12px;
+}
+
+.errors-list {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.errors-list li {
+    background: #fef2f2;
+    padding: 10px 15px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: #b91c1c;
+    border-left: 4px solid #f87171;
+}
+
+.errors-list li strong {
+    color: #991b1b;
+}
+
+.errors-list li em {
+    font-style: normal;
+    color: #7f1d1d;
+    display: block;
+    margin-top: 4px;
+}
+
+/* Styl dla wiadomości o sukcesie po pobraniu */
+.success-text {
+    text-align: center;
+    padding: 18px 20px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #065f46;
+    background: #d1fae5;
+    border-radius: 12px;
+    margin-top: 10px;
+    border: 1px solid #6ee7b7;
+}
+
+/* Styl dla przycisku/linku z klasą .disabled */
+.neo-button.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    box-shadow: var(--shadow-neo-inset);
+}
+
