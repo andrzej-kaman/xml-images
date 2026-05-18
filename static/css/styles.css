@@ -479,7 +479,7 @@ h1 {
 }
 
 /* ==================== PROGRESS ==================== */
-.progress-container { margin-top: 30px; display: none; }
+.progress-container { margin-top: 30px; }
 
 .neo-progress {
     width: 100%;
