@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: generator-kreacji-xml
+    env: python
+    plan: free  # Możesz zmienić na płatny plan w panelu Render
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn --workers 4 --bind 0.0.0.0:$PORT XML:app"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11  # Możesz dostosować do swojej wersji Pythona
+      - key: GEMINI_API_KEY
+        fromSecret: true # Informuje Render, aby użyć klucza z panelu Secrets

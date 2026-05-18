@@ -1,0 +1,5 @@
+Flask
+google-generativeai
+httpx
+Pillow
+gunicorn

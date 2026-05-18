@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generator Kreacji z XML</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+    <div class="container">
+
+        <div class="header neo-card">
+            <h1>Generator Kreacji z XML</h1>
+            <p class="subtitle">Nowa wersja - w całości oparta o feed produktowy</p>
+        </div>
+
+        <div class="mode-tabs neo-card">
+            <button class="mode-tab active" id="tab-xml" onclick="switchMode('xml')">
+                <span class="tab-icon">📄</span>
+                <span class="tab-label">XML Workflow</span>
+                <span class="tab-desc">Główny proces</span>
+            </button>
+            <button class="mode-tab" id="tab-upload" onclick="switchMode('upload')">
+                <span class="tab-icon">📤</span>
+                <span class="tab-label">Tryb Custom</span>
+                <span class="tab-desc">Dodaj ręcznie</span>
+            </button>
+        </div>
+
+        <div class="card neo-card">
+
+            <!-- ─── MODE: XML WORKFLOW ────────────────────────────────── -->
+            <div id="mode-xml">
+                <!-- Krok 1: Upload pliku XML -->
+                <div id="xml-step-upload">
+                    <div class="instructions">
+                        <h3>Krok 1: Wgraj plik XML</h3>
+                        <p>Wybierz lub przeciągnij plik XML z linkami do produktów, które chcesz przetworzyć.</p>
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label" for="xmlFileInput">Plik XML</label>
+                        <input type="file" id="xmlFileInput" class="input-field neo-input" accept=".xml">
+                    </div>
+                     <button id="startXmlBtn" class="btn neo-button" onclick="handleXmlUpload()">
+                        <span class="btn-icon">▶️</span>
+                        <span class="btn-text">Rozpocznij</span>
+                    </button>
+                </div>
+
+                <!-- Krok 2: Ustawienia generowania -->
+                <div id="xml-step-settings" style="display:none;">
+                    <h3>Krok 2: Ustawienia Obrazów</h3>
+                    <p>Znaleziono <strong id="settings-image-count">0</strong> obrazów. Wybierz globalne ustawienia, które zostaną do nich zastosowane.</p>
+                    <div class="settings-grid">
+                        <div class="input-group">
+                            <label class="input-label" for="xmlResolution">Rozdzielczość</label>
+                            <select id="xmlResolution" class="input-field neo-input">
+                                <option value="1K">1K (~1024px)</option>
+                                <option value="2K">2K (~2048px)</option>
+                                <option value="4K">4K (~4096px)</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label" for="xmlAspectRatio">Proporcje</label>
+                            <select id="xmlAspectRatio" class="input-field neo-input">
+                                <option value="1:1">1:1 (Kwadrat)</option>
+                                <option value="16:9">16:9 (Poziom)</option>
+                                <option value="9:16">9:16 (Pion)</option>
+                                <option value="4:5">4:5 (Instagram)</option>
+                                <option value="3:2">3:2 (Fotografia)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn neo-button" onclick="handleSettingsSubmit()">Dalej</button>
+                </div>
+
+                <!-- Krok 3: Wybór stylów -->
+                <div id="xml-step-styles" style="display:none;">
+                    <h3>Krok 3: Wybierz Style</h3>
+                    <p>Wpisz dwa style, które zostaną użyte do wygenerowania dwóch wariantów kreacji dla każdego produktu.</p>
+                    <div class="input-group">
+                        <label class="input-label" for="xmlStyle1">Styl 1 (np. "Clean studio lighting, on a white pedestal")</label>
+                        <input type="text" id="xmlStyle1" class="input-field neo-input" placeholder="Wpisz pierwszy styl...">
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label" for="xmlStyle2">Styl 2 (np. "In a real-life setting, on a wooden table, morning light")</label>
+                        <input type="text" id="xmlStyle2" class="input-field neo-input" placeholder="Wpisz drugi styl...">
+                    </div>
+                    <button id="generateBtn" class="btn neo-button" onclick="handleStylesSubmit()">
+                        <span class="btn-icon">🚀</span>
+                        <span class="btn-text">Generuj Kreacje</span>
+                    </button>
+                </div>
+
+                <!-- Krok 4: Postęp -->
+                <div id="xml-step-progress" style="display:none;">
+                    <h3>Krok 4: Przetwarzanie...</h3>
+                    <div class="progress-container">
+                        <div class="progress-bar neo-progress"><div class="progress-fill" id="xmlProgressFill"></div></div>
+                        <div class="status-message" id="xmlStatusMessage"></div>
+                    </div>
+                </div>
+
+                <!-- Krok 5: Wyniki -->
+                <div id="xml-step-results" style="display:none;">
+                    <h3>Krok 5: Gotowe!</h3>
+                    <div id="xmlDownloadSection"></div>
+                </div>
+            </div>
+
+            <!-- ─── MODE: UPLOAD (CUSTOM) ───────────────────────────── -->
+            <div id="mode-upload" style="display:none;">
+                <div class="instructions">
+                    <h3>📋 Jak to działa?</h3>
+                    <ol>
+                        <li>Dodaj od 1 do 4 zdjęć osoby oraz wpisz jej zawód/opis.</li>
+                        <li>Kliknij <strong>+ Dodaj kolejną osobę</strong>, aby dodać następny zestaw.</li>
+                        <li>Kliknij „Generuj Kreacje" – AI wygeneruje profesjonalne zdjęcia.</li>
+                    </ol>
+                </div>
+                <div id="personsContainer"></div>
+                <button class="btn-add-person neo-button-add" onclick="addPersonSet()">
+                    <span>＋</span> Dodaj kolejną osobę
+                </button>
+                <hr class="separator">
+                <button class="btn neo-button" onclick="processUploadMode()">
+                    <span class="btn-icon">🚀</span>
+                    <span class="btn-text">Generuj Kreacje (Custom)</span>
+                </button>
+            </div>
+
+            <!-- ─── SHARED: Error message ────────────────────────────── -->
+            <div id="errorMessage" class="alert alert-error" style="display:none;"></div>
+
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
