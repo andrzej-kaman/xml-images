@@ -19,19 +19,13 @@ app = Flask(__name__)
 # ============== CONFIGURATION ==============
 
 # The new google-genai library automatically uses the GEMINI_API_KEY environment variable.
-# We just need to ensure it's set in the Render environment.
 client = genai.Client()
 
 # Model Names
-TEXT_ANALYSIS_MODEL    = "gemini-2.5-flash"
-IMAGE_GENERATION_MODEL = "gemini-2.5-flash-image" # Correct model for image input
+TEXT_ANALYSIS_MODEL    = "gemini-1.0-pro"
+IMAGE_GENERATION_MODEL = "gemini-1.0-pro-vision" # Correct model for image input
 
 MAX_REFERENCE_IMAGES = 5
-IMAGE_ASPECT_RATIO = "1:1"
-IMAGE_SIZE = "None" # This is not directly used in the new API in the same way
-MAX_RETRIES = 3
-RETRY_DELAY_BASE = 2
-RETRY_DELAY_MAX = 120
 
 # Folders
 TEMP_FOLDER   = os.path.join('/tmp', 'product_processor')
@@ -76,8 +70,9 @@ class GeminiAnalysisError(Exception):
 def analyze_product_for_two_prompts_xml(images_pil, product_name):
     analysis_prompt = f"""Jesteś ekspertem od fotografii produktowej... (prompt as before) ...[Prompt 2: Lifestylowy]"""
     try:
+        model = genai.GenerativeModel(TEXT_ANALYSIS_MODEL)
         contents = [analysis_prompt] + images_pil
-        response = client.models.generate_content(model=TEXT_ANALYSIS_MODEL, contents=contents)
+        response = model.generate_content(contents)
         if not response or not response.text:
             raise GeminiAnalysisError(f"Gemini zwrócił pustą odpowiedź dla {product_name}")
         prompts = [p.strip() for p in response.text.splitlines() if p.strip()]
@@ -92,15 +87,22 @@ def generate_gemini_image_sync(prompt, index, product_name, reference_images_pil
         contents.extend(reference_images_pil[:MAX_REFERENCE_IMAGES])
     
     try:
-        # NOTE: The new API might not support all old parameters directly in generate_content.
-        # This is a simplified call based on the new pattern.
-        response = client.models.generate_content(model=IMAGE_GENERATION_MODEL, contents=contents)
-        if response.parts:
-            img_bytes = response.parts[0].inline_data.data
-            pil_image = Image.open(io.BytesIO(img_bytes))
-            return pil_image, filename
+        model = genai.GenerativeModel(IMAGE_GENERATION_MODEL)
+        response = model.generate_content(contents)
+        
+        # Iterate through all parts to find the image data, making the code more robust.
+        for part in response.parts:
+            if part.inline_data:
+                img_bytes = part.inline_data.data
+                pil_image = Image.open(io.BytesIO(img_bytes))
+                return pil_image, filename
+        
+        # If loop finishes and no image was found
+        print(f"Error: No image data found in Gemini response for prompt: {prompt}")
+        return None, None
+
     except Exception as e:
-        print(f"Error generating image: {e}")
+        print(f"Error during image generation: {e}")
     return None, None
 
 # ============== API ENDPOINTS & WORKFLOW ==============
