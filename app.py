@@ -1,37 +1,34 @@
-from flask import Flask, render_template, jsonify, Response, stream_with_context, send_file, request
+from flask import Flask, render_template, jsonify, Response, send_file, request
 from google import genai
+from google.genai import types
 import os
 import io
 import time
-import random
 import json
 import threading
 import zipfile
-import shutil
 from PIL import Image
-from datetime import datetime
 import re
 import httpx
 import xml.etree.ElementTree as ET
 
 app = Flask(__name__)
 
-# ============== CONFIGURATION ==============
+# ============== KONFIGURACJA ==============
 
-# Nowa biblioteka google-genai automatycznie używa zmiennej środowiskowej GEMINI_API_KEY.
+# Automatycznie pobiera klucz z os.environ["GEMINI_API_KEY"]
 client = genai.Client()
 
-# Zaktualizowane Modele
-TEXT_ANALYSIS_MODEL    = "gemini-2.5-flash"        # Szybki model multimodalny do czytania obrazów i generowania tekstu
-IMAGE_GENERATION_MODEL = "gemini-2.5-flash-image" # Dedykowany model graficzny (Imagen) do generowania obrazów
+# Modele z rodziny Gemini 2.5
+TEXT_ANALYSIS_MODEL = "gemini-2.5-flash"
+IMAGE_GENERATION_MODEL = "gemini-2.5-flash-image"
 
-MAX_REFERENCE_IMAGES = 5
+# Foldery tymczasowe
+TEMP_FOLDER = os.path.join('/tmp', 'product_processor')
+os.makedirs(TEMP_FOLDER, exist_ok=True)
 
-# Foldery
-TEMP_FOLDER   = os.path.join('/tmp', 'product_processor')
-os.makedirs(TEMP_FOLDER,   exist_ok=True)
 
-# ============== HELPER FUNCTIONS ==============
+# ============== FUNKCJE POMOCNICZE ==============
 
 def download_image_from_url(url, folder):
     try:
@@ -62,16 +59,23 @@ def parse_xml_for_image_urls(xml_path):
         print(f"❌ Błąd parsowania XML: {e}")
         return []
 
-# ============== GEMINI & IMAGEN FUNCTIONS ==============
 
-class GeminiAnalysisError(Exception):
-    pass
+# ============== LOGIKA AI (GEMINI 2.5) ==============
 
 def analyze_product_for_two_prompts_xml(images_pil, product_name):
-    analysis_prompt = f"""Jesteś ekspertem od fotografii produktowej... 
-    (Tutaj wstaw pełną treść swojego promptu, instrukcji analizy, 
-    wymogów kompozycji itp.) 
-    ...[Prompt 2: Lifestylowy]"""
+    """
+    Analiza zdjęcia wejściowego przez model Gemini w celu uzyskania 2 promptów.
+    WAŻNE: Podmień ten tekst na swój prawdziwy, długi prompt. 
+    Uważaj, żeby zostawić potrójne cudzysłowy na początku i końcu!
+    """
+    analysis_prompt = """Jesteś ekspertem od fotografii produktowej.
+Przeanalizuj załączone zdjęcie produktu i wygeneruj dokładnie 2 precyzyjne prompty w języku angielskim, służące do wygenerowania nowego tła (lifestyle / aranżacja) dla tego produktu.
+
+Wymagania:
+1. Pierwszy prompt ma być klasyczny, czysty i minimalistyczny.
+2. Drugi prompt ma być lifestylowy, pasujący do zastosowania produktu.
+Nie dodawaj żadnych wstępów. Zwróć tylko 2 linijki tekstu, każda z nich to osobny prompt.
+"""
     try:
         contents = [analysis_prompt] + images_pil
         response = client.models.generate_content(
@@ -80,46 +84,60 @@ def analyze_product_for_two_prompts_xml(images_pil, product_name):
         )
         
         if not response or not response.text:
-            raise GeminiAnalysisError(f"Gemini zwrócił pustą odpowiedź dla {product_name}")
+            raise Exception(f"Gemini zwrócił pustą odpowiedź dla {product_name}")
             
         prompts = [p.strip() for p in response.text.splitlines() if p.strip()]
         return prompts[:2]
     except Exception as e:
-        raise GeminiAnalysisError(f"Błąd analizy Gemini dla '{product_name}': {e}")
+        raise Exception(f"Błąd analizy Gemini dla '{product_name}': {e}")
+
 
 def generate_gemini_image_sync(prompt, index, product_name):
     """
-    Uwaga: Standardowe API Imagen (imagen-3.0-generate-001) generuje obraz z tekstu. 
-    Bezpośrednie przekazanie zdjęcia referencyjnego wymaga specjalnych metod edycji obrazów.
-    W tej funkcji skupiamy się na wygenerowaniu obrazu na podstawie wygenerowanego promptu.
+    Wywołanie modelu Gemini (gemini-2.5-flash-image) do WYGENEROWANIA obrazu.
+    Korzystamy tu z generate_content() oraz odpowiedniej modalności.
     """
     safe_product_name = re.sub(r'[^\w\-_\.]', '', product_name)
     filename = f"{safe_product_name}_creative_{index}_{int(time.time())}.jpeg"
     
     try:
-        result = client.models.generate_images(
+        response = client.models.generate_content(
             model=IMAGE_GENERATION_MODEL,
-            prompt=prompt,
-            config=dict(
-                number_of_images=1,
-                output_mime_type="image/jpeg",
-                aspect_ratio="1:1"
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                # Kluczowe ustawienie: informujemy model Gemini, że oczekujemy na wyjściu obrazka
+                response_modalities=["IMAGE"]
             )
         )
         
-        for generated_image in result.generated_images:
-            img_bytes = generated_image.image.image_bytes
+        img_bytes = None
+        
+        # Nowe SDK Google przechowuje wygenerowane obrazy z modeli Gemini w kilku możliwych miejscach
+        # Próba 1: Szukamy we wbudowanej tablicy generated_images
+        if hasattr(response, 'generated_images') and response.generated_images:
+            img_bytes = response.generated_images[0].image.image_bytes
+            
+        # Próba 2: Szukamy bezpośrednio w strumieniu odpowiedzi (częsty przypadek dla Gemini)
+        elif response.candidates and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, 'inline_data') and part.inline_data:
+                    img_bytes = part.inline_data.data
+                    break
+        
+        # Jeśli udało się wyciągnąć bajty, zapisujemy jako obraz
+        if img_bytes:
             pil_image = Image.open(io.BytesIO(img_bytes))
             return pil_image, filename
-        
-        print(f"Error: Nie znaleziono danych obrazu w odpowiedzi dla promptu: {prompt}")
+            
+        print(f"Błąd: Nie znaleziono danych obrazu w odpowiedzi Gemini dla promptu: {prompt}")
         return None, None
 
     except Exception as e:
-        print(f"Error during image generation: {e}")
+        print(f"Błąd podczas generowania obrazu Gemini: {e}")
         return None, None
 
-# ============== API ENDPOINTS & WORKFLOW ==============
+
+# ============== ENDPOINTY FLASK ==============
 
 @app.route('/')
 def index():
@@ -180,7 +198,8 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                 product_name = os.path.splitext(image_file)[0]
                 with Image.open(image_path) as img:
                     pil_img = img.convert('RGB')
-                    # Analiza obrazu w celu uzyskania promptów
+                    
+                    # 1. Krok: Gemini 2.5 Flash odczytuje obrazek i tworzy prompty
                     base_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name)
                     
                     final_prompts = []
@@ -189,13 +208,13 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                     else:
                         final_prompts = base_prompts
 
-                    # Generowanie obrazów na podstawie promptów
+                    # 2. Krok: Gemini 2.5 Flash Image tworzy obrazki
                     for i, prompt in enumerate(final_prompts):
-                        # Zauważ zmianę argumentów - Imagen domyślnie korzysta z samego promptu tekstowego
                         pil_image, filename = generate_gemini_image_sync(prompt, i, product_name)
                         if pil_image and filename:
                             pil_image.save(os.path.join(output_folder, filename))
-                    update_status(processed_increment=1)
+                            
+                update_status(processed_increment=1)
             except Exception as e:
                 update_status(error=str(e))
         
@@ -245,4 +264,4 @@ def download_zip(filename):
     return jsonify({'error': 'Plik nie istnieje'}), 404
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8003, debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8003)), debug=False)
