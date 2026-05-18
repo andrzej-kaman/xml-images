@@ -4,7 +4,7 @@ services:
     env: python
     plan: free  # Możesz zmienić na płatny plan w panelu Render
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn --workers 4 --bind 0.0.0.0:$PORT XML:app"
+    startCommand: "gunicorn --workers 4 --bind 0.0.0.0:$PORT app:app"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11  # Możesz dostosować do swojej wersji Pythona
