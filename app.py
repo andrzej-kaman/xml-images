@@ -145,8 +145,7 @@ FORMAT ODPOWIEDZI:
 
     try:
         contents = [analysis_prompt] + images_pil
-        response = gemini_client.models.generate_content(
-            model=TEXT_ANALYSIS_MODEL,
+        response = text_model.generate_content(
             contents=contents,
         )
 
@@ -199,8 +198,7 @@ FORMAT WYJŚCIOWY (TYLKO TO):
     print(f"   🤖 Analizuję {len(images_pil)} zdjęć produktu (XML workflow): {product_name}")
     try:
         contents = [analysis_prompt] + images_pil
-        response = gemini_client.models.generate_content(
-            model=TEXT_ANALYSIS_MODEL,
+        response = text_model.generate_content(
             contents=contents,
         )
 
@@ -495,4 +493,6 @@ def download_zip(filename):
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8003, debug=True)
+:
     app.run(host='0.0.0.0', port=8003, debug=True)
