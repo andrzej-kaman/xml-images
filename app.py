@@ -164,7 +164,7 @@ def analyze_product_for_two_prompts_xml(images_pil, product_name, styles=None):
         style_2 = styles[1] if len(styles) > 1 else style_1
         
         analysis_prompt = f"""Jesteś ekspertem od fotografii produktowej.
-Przeanalizuj załączone zdjęcie produktu. Następnie stwórz 2 precyzyjne prompty w języku angielskim dla generatora obrazów.
+Przeanalizuj załączone zdjęcie produktu. Następnie stwórz 2 precyzyjne prompty w języku angielskim dla generatora obrazów. Jeżeli na produkcie są napisy masz je również przekazywać, bez literówk, bez błędów, w języku jak na produkcie, ma to być wskazówka by nie renderować byków w słowah na produktach.
 
 ZASADA: Najpierw dokładnie opisz fizyczny wygląd produktu ze zdjęcia (materiał, kształt, kolory, widoczne etykiety), a następnie umieść ten produkt DOKŁADNIE w takim otoczeniu/stylu:
 - Prompt 1 ma mieć otoczenie: "{style_1}"
