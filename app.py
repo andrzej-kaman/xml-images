@@ -12,6 +12,11 @@ import re
 import httpx
 import xml.etree.ElementTree as ET
 import shutil
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime, timedelta
+import pathlib
+import atexit
+
 
 app = Flask(__name__)
 
@@ -54,6 +59,30 @@ GLOBAL_SAFETY_SETTINGS = [
 
 
 # ============== FUNKCJE POMOCNICZE ==============
+
+def cleanup_old_sessions():
+    """Skanuje folder tymczasowy i usuwa sesje starsze niż 45 minut."""
+    print("🧹 Uruchamiam zadanie czyszczenia starych sesji (kryterium: 45 minut)...")
+    temp_path = pathlib.Path(TEMP_FOLDER)
+    cutoff = datetime.now() - timedelta(minutes=45)
+
+    for path in temp_path.iterdir():
+        if path.is_dir() and path.name.startswith('session_'):
+            try:
+                dir_time = datetime.fromtimestamp(path.stat().st_mtime)
+                if dir_time < cutoff:
+                    shutil.rmtree(path)
+                    print(f"🗑️ Usunięto starą sesję (starsza niż 45 min): {path.name}")
+            except Exception as e:
+                print(f"❌ Błąd podczas usuwania folderu {path.name}: {e}")
+        elif path.is_file() and path.name.startswith('kreacje_') and path.name.endswith('.zip'):
+             try:
+                file_time = datetime.fromtimestamp(path.stat().st_mtime)
+                if file_time < cutoff:
+                    os.remove(path)
+                    print(f"🗑️ Usunięto stary plik ZIP (starszy niż 45 min): {path.name}")
+             except Exception as e:
+                print(f"❌ Błąd podczas usuwania pliku {path.name}: {e}")
 
 def download_image_from_url(url, folder):
     try:
@@ -250,6 +279,8 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                 image_path = os.path.join(feed_folder, image_file)
                 product_name = os.path.splitext(image_file)[0]
                 with Image.open(image_path) as img:
+                    # Optymalizacja RAM: Zmniejszamy obraz przed analizą
+                    img.thumbnail((1024, 1024))
                     pil_img = img.convert('RGB')
                     
                     final_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name, styles)
@@ -347,5 +378,14 @@ def download_zip(filename):
     return send_file(filepath, as_attachment=True)
 
 if __name__ == '__main__':
+    # Konfiguracja i uruchomienie harmonogramu czyszczenia
+    scheduler = BackgroundScheduler()
+    # Uruchamiaj zadanie co 45 minut
+    scheduler.add_job(func=cleanup_old_sessions, trigger="interval", minutes=45)
+    scheduler.start()
+
+    # Zapewnienie, że harmonogram zostanie poprawnie zamknięty przy wyjściu z aplikacji
+    atexit.register(lambda: scheduler.shutdown())
+
     port = int(os.environ.get('PORT', 8003))
     app.run(host='0.0.0.0', port=port, debug=False)
