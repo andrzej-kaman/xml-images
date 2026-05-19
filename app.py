@@ -102,25 +102,27 @@ def parse_xml_for_products_with_images(xml_path):
     """Parsuje XML w poszukiwaniu produktów i ich obrazów, obsługując przestrzeń nazw 'g'."""
     products = []
     try:
-        # Zarejestruj przestrzeń nazw, aby uniknąć błędów 'prefix not found'
         namespaces = {'g': 'http://base.google.com/ns/1.0'}
         ET.register_namespace('g', namespaces['g'])
 
         tree = ET.parse(xml_path)
         root = tree.getroot()
 
-        # Wyszukaj tagów <item> lub <product>
-        product_nodes = root.findall('.//item') + root.findall('.//product')
+        # Bardziej precyzyjne wyszukiwanie <item> wewnątrz <channel>
+        channel = root.find('channel')
+        if channel is not None:
+            product_nodes = channel.findall('item')
+        else:
+            # Fallback for simpler XML structures
+            product_nodes = root.findall('.//item') + root.findall('.//product')
 
         if not product_nodes:
             product_nodes = [root]
 
         for i, prod_node in enumerate(product_nodes):
             urls = []
-            # Znajdź wszystkie URL-e obrazów wewnątrz węzła produktu
-            # Szukamy tagów zawierających 'image_link' lub 'image'
             for elem in prod_node.iter():
-                tag = elem.tag.split('}')[-1] # Usuń przestrzeń nazw z tagu, jeśli istnieje
+                tag = elem.tag.split('}')[-1]
                 if 'image_link' in tag or 'additional_image_link' in tag:
                     if elem.text and elem.text.strip().startswith('http'):
                         urls.append(elem.text.strip())
@@ -132,9 +134,8 @@ def parse_xml_for_products_with_images(xml_path):
             if urls:
                 unique_urls = list(dict.fromkeys(urls))
 
-                # Wyszukaj nazwę produktu, uwzględniając przestrzeń nazw
-                name_node = prod_node.find('title') or prod_node.find('g:title', namespaces)
-                if name_node is None: # Spróbuj znaleźć bez 'g:' jeśli pierwsze zawiodło
+                name_node = prod_node.find('g:title', namespaces) or prod_node.find('title')
+                if name_node is None:
                      name_node = prod_node.find('.//title')
 
                 product_name = name_node.text.strip() if name_node is not None and name_node.text else f"Produkt {i+1}"
@@ -367,7 +368,7 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                 # Również inkrementujemy, aby kontynuować
                 update_status(processed_increment=1)
 
-            update_status(status='complete')
+        update_status(status='complete')
     except Exception as e:
             update_status(status='failed', error_details={'message': str(e), 'step': 'general'})
 
