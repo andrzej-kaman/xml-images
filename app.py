@@ -285,18 +285,18 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                     
                     final_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name, styles)
 
-                    # Dodajemy krótką przerwę po analizie tekstu, aby rozłożyć zapytania do AI
-                    print(f"⏳ Czekam 3 sekundy po analizie tekstu (ochrona przed błędem 429)...")
-                    time.sleep(3)
+                    # Zwiększamy przerwę po analizie tekstu
+                    print(f"⏳ Czekam 5 sekund po analizie tekstu (ochrona przed błędem 429)...")
+                    time.sleep(5)
 
                     for i, prompt in enumerate(final_prompts):
                         generated_image, filename = generate_gemini_image_sync(prompt, i, product_name, pil_img, resolution, aspect_ratio)
                         if generated_image and filename:
                             generated_image.save(os.path.join(output_folder, filename))
                         
-                        # Dodajemy dłuższą przerwę po KAŻDEJ operacji generowania obrazu
-                        print(f"⏳ Czekam 5 sekund po wygenerowaniu obrazu (ochrona przed błędem 429)...")
-                        time.sleep(5)
+                        # Znacząco zwiększamy przerwę po generowaniu obrazu - to kluczowa zmiana
+                        print(f"⏳ Czekam 10 sekund po wygenerowaniu obrazu (ochrona przed błędem 429)...")
+                        time.sleep(10)
                             
                 update_status(processed_increment=1)
                 
@@ -393,3 +393,4 @@ if __name__ == '__main__':
 
     port = int(os.environ.get('PORT', 8003))
     app.run(host='0.0.0.0', port=port, debug=False)
+
