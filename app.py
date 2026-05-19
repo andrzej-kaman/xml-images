@@ -265,30 +265,87 @@ def index():
 
 @app.route('/api/xml/start', methods=['POST'])
 def xml_start_processing():
-    if 'xml_file' not in request.files: return jsonify({'error': 'Brak pliku XML'}), 400
-    file = request.files['xml_file']
-    if not file or not file.filename.endswith('.xml'): return jsonify({'error': 'Wymagany plik .xml'}), 400
-
     session_id = f"session_{int(time.time())}"
     session_folder = os.path.join(TEMP_FOLDER, session_id)
     os.makedirs(session_folder, exist_ok=True)
-
     xml_path = os.path.join(session_folder, 'original.xml')
-    file.save(xml_path)
 
-    products = parse_xml_for_products_with_images(xml_path)
-    if not products: return jsonify({'error': 'Nie znaleziono produktów z obrazami w pliku XML.'}), 400
+    try:
+        # Sprawdzamy, czy przesłano URL w ciele JSON
+        if request.is_json and 'xml_url' in request.json:
+            xml_url = request.json['xml_url']
+            if not xml_url:
+                return jsonify({'error': 'Podano pusty link (URL)'}), 400
 
-    total_images_to_process = sum(len(p['image_urls']) for p in products)
+            print(f"INFO: Otrzymano żądanie z URL: {xml_url}")
+            try:
+                response = httpx.get(xml_url, follow_redirects=True, timeout=20)
+                response.raise_for_status()
+                
+                # Sprawdzamy, czy content-type jest XML
+                content_type = response.headers.get('content-type', '').lower()
+                if 'xml' not in content_type:
+                    print(f"WARN: Content-Type odpowiedzi to '{content_type}', ale kontynuuję przetwarzanie.")
 
-    status_data = {
-        'status': 'pending', 'total_products': len(products), 'processed_products': 0,
-        'products': products, 'errors': [], 'total_images': total_images_to_process
-    }
-    with open(os.path.join(session_folder, 'status.json'), 'w') as f:
-        json.dump(status_data, f)
+                # Zapisujemy pobraną treść
+                with open(xml_path, 'wb') as f:
+                    f.write(response.content)
+                print(f"INFO: Pomyślnie pobrano i zapisano plik XML z URL.")
 
-    return jsonify({'status': 'Sesja rozpoczęta', 'session_id': session_id, 'product_count': len(products), 'image_count': total_images_to_process})
+            except httpx.RequestError as e:
+                print(f"ERROR: Błąd podczas pobierania pliku z URL: {e}")
+                return jsonify({'error': f'Nie udało się pobrać pliku z podanego adresu URL: {e}'}), 500
+            except Exception as e:
+                print(f"ERROR: Nieoczekiwany błąd przy obsłudze URL: {e}")
+                return jsonify({'error': 'Wystąpił wewnętrzny błąd serwera przy obsłudze URL.'}), 500
+
+        # Sprawdzamy, czy przesłano plik
+        elif 'xml_file' in request.files:
+            file = request.files['xml_file']
+            if not file or not file.filename:
+                return jsonify({'error': 'Nie wybrano pliku do wgrania.'}), 400
+            if not file.filename.endswith('.xml'):
+                return jsonify({'error': 'Wymagany jest plik z rozszerzeniem .xml'}), 400
+            
+            file.save(xml_path)
+            print(f"INFO: Pomyślnie zapisano wgrany plik XML.")
+
+        # Jeśli nie ma ani jednego, ani drugiego
+        else:
+            return jsonify({'error': 'Nie dostarczono pliku XML ani linku URL.'}), 400
+
+        # Wspólna część dla obu metod
+        products = parse_xml_for_products_with_images(xml_path)
+        if not products:
+            return jsonify({'error': 'Nie znaleziono prawidłowych produktów z obrazami w dostarczonym pliku XML.'}), 400
+
+        total_images_to_process = sum(len(p['image_urls']) for p in products)
+        status_data = {
+            'status': 'pending',
+            'total_products': len(products),
+            'processed_products': 0,
+            'products': products,
+            'errors': [],
+            'total_images': total_images_to_process
+        }
+        with open(os.path.join(session_folder, 'status.json'), 'w') as f:
+            json.dump(status_data, f)
+
+        return jsonify({
+            'status': 'Sesja rozpoczęta',
+            'session_id': session_id,
+            'product_count': len(products),
+            'image_count': total_images_to_process
+        })
+
+    except Exception as e:
+        # Ogólna obsługa błędów, jeśli coś pójdzie nie tak na wczesnym etapie
+        print(f"FATAL: Krytyczny błąd w xml_start_processing: {e}")
+        # Warto usunąć folder sesji, jeśli został utworzony, a proces się nie powiódł
+        if os.path.exists(session_folder):
+            shutil.rmtree(session_folder)
+        return jsonify({'error': 'Wystąpił krytyczny błąd podczas inicjowania sesji.'}), 500
+
 
 def run_generation_thread(session_id, resolution, aspect_ratio, styles):
     session_folder = os.path.join(TEMP_FOLDER, session_id)
@@ -347,8 +404,8 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
 
                 final_prompts = analyze_product_for_two_prompts_xml(pil_images, product_name, styles)
 
-                print(f"⏳ Czekam 12 sekund po analizie tekstu...")
-                time.sleep(12)
+                print(f"⏳ Czekam 10 sekund po analizie tekstu...")
+                time.sleep(10)
 
                 for i, prompt in enumerate(final_prompts):
                     # Przekazujemy listę obrazów PIL jako obrazy referencyjne
@@ -356,8 +413,8 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                     if generated_image and filename:
                         generated_image.save(os.path.join(output_folder, filename))
 
-                    print(f"⏳ Czekam 18 sekund po wygenerowaniu obrazu...")
-                    time.sleep(18)
+                    print(f"⏳ Czekam 15 sekund po wygenerowaniu obrazu...")
+                    time.sleep(15)
 
                 update_status(processed_increment=1)
             except Exception as e:
