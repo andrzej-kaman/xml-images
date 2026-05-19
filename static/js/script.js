@@ -131,7 +131,7 @@ function displayResults(data) {
 }
 
 // ==================== XML WORKFLOW ====================
-asnyc function handleXmlUpload() {
+async function handleXmlUpload() {
     hideError();
     const fileInput = document.getElementById('xmlFileInput');
     const urlInput = document.getElementById('xmlUrlInput');
