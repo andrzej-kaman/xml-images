@@ -3,244 +3,131 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Generator Kreacji z XML</title>
+    <title>Dashboard Kreacji</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
-    <div class="container">
+    <div class="app-container">
+        
 
-        <div class="header neo-card">
-            <h1>Generator Kreacji z XML</h1>
-            <p class="subtitle">Nowa wersja - w całości oparta o feed produktowy</p>
+        <main class="main-content">
+    <header class="main-header">
+        <div class="welcome-message">
+            <h2>Witaj z powrotem!</h2>
+            <p>Sprawdźmy, jakie kreacje dziś stworzymy.</p>
         </div>
-
-        <div class="mode-tabs neo-card">
-            <button class="mode-tab active" id="tab-xml" onclick="switchMode('xml')">
-                <span class="tab-icon">📄</span>
-                <span class="tab-label">XML Workflow</span>
-                <span class="tab-desc">Główny proces</span>
-            </button>
-            <button class="mode-tab" id="tab-upload" onclick="switchMode('upload')">
-                <span class="tab-icon">📤</span>
-                <span class="tab-label">Tryb Custom</span>
-                <span class="tab-desc">Dodaj ręcznie</span>
-            </button>
+        <div class="header-actions">
+            <button id="theme-toggle-btn" class="action-btn"><i class="fa-regular fa-moon"></i></button>
         </div>
+    </header>
 
-        <div class="card neo-card">
+    <div class="content-area">
 
-            <!-- ─── MODE: XML WORKFLOW ────────────────────────────────── -->
-            <div id="mode-xml">
-                <!-- Krok 1: Upload pliku XML -->
-                <div id="xml-step-upload">
-                    <div class="instructions">
-                        <h3>Krok 1: Podaj źródło pliku XML</h3>
-                        <p>Wybierz jedną z dwóch opcji: wgraj plik z dysku lub podaj bezpośredni link do pliku XML.</p>
-                    </div>
+        <div class="app-main-view">
 
-                    <!-- Opcje wyboru źródła -->
-                    <div class="input-source-choice">
-                        <label>
-                            <input type="radio" name="xmlSource" value="file" checked onchange="toggleXmlSource()">
-                            Wgraj plik z dysku
-                        </label>
-                        <label>
-                            <input type="radio" name="xmlSource" value="url" onchange="toggleXmlSource()">
-                            Podaj link (URL)
-                        </label>
-                    </div>
-
-                    <!-- Kontener dla uploadu pliku -->
-                    <div class="input-group" id="xml-source-file">
-                        <label class="input-label" for="xmlFileInput">Plik XML</label>
-                        <input type="file" id="xmlFileInput" class="input-field neo-input" accept=".xml">
-                    </div>
-
-                    <!-- Kontener dla linku URL -->
-                    <div class="input-group" id="xml-source-url" style="display: none;">
-                        <label class="input-label" for="xmlUrlInput">Link do pliku XML</label>
-                        <input type="text" id="xmlUrlInput" class="input-field neo-input" placeholder="https://przyklad.pl/feed.xml">
-                    </div>
-
-                    <button id="startXmlBtn" class="btn neo-button" onclick="handleXmlUpload()">
-                        <span class="btn-icon">▶️</span>
-                        <span class="btn-text">Rozpocznij</span>
-                    </button>
-                </div>
-
-                <!-- Krok 2: Ustawienia generowania -->
-                <div id="xml-step-settings" style="display:none;">
-                    <h3>Krok 2: Ustawienia Obrazów</h3>
-                    <p>Znaleziono <strong id="settings-image-count">0</strong> obrazów. Wybierz globalne ustawienia, które zostaną do nich zastosowane.</p>
-                    <div class="settings-grid">
-                        <div class="input-group">
-                            <label class="input-label" for="xmlResolution">Rozdzielczość</label>
-                            <select id="xmlResolution" class="input-field neo-input">
-                                <option value="1K">1K (~1024px)</option>
-                                <option value="2K">2K (~2048px)</option>
-                                <option value="4K">4K (~4096px)</option>
-                            </select>
-                        </div>
-                        <div class="input-group">
-                            <label class="input-label" for="xmlAspectRatio">Proporcje</label>
-                            <select id="xmlAspectRatio" class="input-field neo-input">
-                                <option value="1:1">1:1 (Kwadrat)</option>
-                                <option value="16:9">16:9 (Poziom)</option>
-                                <option value="9:16">9:16 (Pion)</option>
-                                <option value="4:5">4:5 (Instagram)</option>
-                                <option value="3:2">3:2 (Fotografia)</option>
-                            </select>
-                        </div>
-                    </div>
-                    <button class="btn neo-button" onclick="handleSettingsSubmit()">Dalej</button>
-                </div>
-
-                <!-- Krok 3: Wybór stylów -->
-                <div id="xml-step-styles" style="display:none;">
-                    <h3>Krok 3: Wybierz Style</h3>
-                    <p>Wpisz dwa style, które zostaną użyte do wygenerowania dwóch wariantów kreacji dla każdego produktu.</p>
-                    <div class="input-group">
-                        <label class="input-label" for="xmlStyle1">Styl 1 (np. "Clean studio lighting, on a white pedestal")</label>
-                        <input type="text" id="xmlStyle1" class="input-field neo-input" placeholder="Wpisz pierwszy styl...">
-                    </div>
-                    <div class="input-group">
-                        <label class="input-label" for="xmlStyle2">Styl 2 (np. "In a real-life setting, on a wooden table, morning light")</label>
-                        <input type="text" id="xmlStyle2" class="input-field neo-input" placeholder="Wpisz drugi styl...">
-                    </div>
-                    <button id="generateBtn" class="btn neo-button" onclick="handleStylesSubmit()">
-                        <span class="btn-icon">🚀</span>
-                        <span class="btn-text">Generuj Kreacje</span>
-                    </button>
-                </div>
-
-                <!-- Krok 4: Postęp -->
-                <div id="xml-step-progress" style="display:none;">
-                    <h3>Krok 4: Przetwarzanie...</h3>
-                    <div class="progress-container">
-                        <div class="progress-bar neo-progress"><div class="progress-fill" id="xmlProgressFill"></div></div>
-                        <div class="status-message" id="xmlStatusMessage"></div>
-                    </div>
-                </div>
-
-                <!-- Krok 5: Wyniki -->
-                <div id="xml-step-results" style="display:none;">
-                    <h3>Krok 5: Gotowe!</h3>
-                    <div id="xmlDownloadSection"></div>
-
-                    <!-- Sekcja do wyświetlania błędów przetwarzania -->
-                    <div id="xmlErrorsSection" style="display:none; margin-top: 20px;">
-                        <h4 class="alert-error-title">Wystąpiły problemy podczas przetwarzania niektórych plików:</h4>
-                        <ul id="xmlErrorsList" class="errors-list"></ul>
-                    </div>
-                </div>
+            <!-- Zakładki do przełączania trybów -->
+            <div class="mode-switcher">
+                <button class="mode-tab active" id="tab-xml">
+                    <i class="fa-solid fa-file-code"></i>
+                    <span>XML Workflow</span>
+                </button>
+                <button class="mode-tab" id="tab-upload">
+                    <i class="fa-solid fa-upload"></i>
+                    <span>Tryb Ręczny</span>
+                </button>
             </div>
 
-            <!-- ─── MODE: UPLOAD (MANUAL) ───────────────────────────── -->
-            <div id="mode-upload" style="display:none;">
+            <!-- Główny kontener na kroki aplikacji -->
+            <div class="app-steps-container">
 
-                <!-- Krok 1: Dodawanie produktów (nowa wersja) -->
-                <div id="manual-step-products">
-                    <div class="instructions">
+                <!-- TRYB XML -->
+                <div id="mode-xml">
+                    <div id="xml-step-upload" class="app-step">
+                        <h3>Krok 1: Podaj źródło XML</h3>
+                        <p>Wgraj plik z dysku lub podaj link URL.</p>
+                        <div class="input-group">
+                            <label for="xmlFileInput">Wgraj plik XML</label>
+                            <input type="file" id="xmlFileInput" class="form-input">
+                        </div>
+                        <div class="input-group">
+                            <label for="xmlUrlInput">Lub podaj link do pliku XML</label>
+                            <input type="text" id="xmlUrlInput" class="form-input" placeholder="https://przyklad.pl/feed.xml">
+                        </div>
+                        <button id="startXmlBtn" class="btn btn-primary">Rozpocznij analizę</button>
+                    </div>
+
+                    <div id="xml-step-settings" class="app-step" style="display:none;">
+                        <h3>Krok 2: Ustawienia Obrazów</h3>
+                        <p>Znaleziono <strong id="settings-image-count">0</strong> produktów. Wybierz globalne ustawienia.</p>
+                        <!-- Formularze ustawień (rozdzielczość, proporcje) -->
+                    </div>
+
+                    <div id="xml-step-styles" class="app-step" style="display:none;">
+                        <h3>Krok 3: Wybierz Style</h3>
+                        <!-- Formularze stylów -->
+                    </div>
+                </div>
+
+                <!-- TRYB RĘCZNY (MANUAL) -->
+                <div id="mode-upload" style="display:none;">
+                    <div id="manual-step-products" class="app-step">
                         <h3>Krok 1: Dodaj produkty ręcznie</h3>
-                        <p>Użyj tej opcji, jeśli zamiast pliku XML wolisz ręcznie dodać produkty. Możesz dodać maksymalnie 10 produktów, każdy z maksymalnie 4 zdjęciami.</p>
+                        <p>Dodaj do 10 produktów, każdy z max. 4 zdjęciami.</p>
+                        <div id="productsContainer"></div>
+                        <button id="addProductBtn" class="btn">+ Dodaj produkt</button>
+                        <hr>
+                        <button id="manualSubmitBtn" class="btn btn-primary">Dalej</button>
                     </div>
-                    
-                    <!-- Kontener na dynamicznie dodawane karty produktów -->
-                    <div id="productsContainer"></div>
 
-                    <!-- Przycisk do dodawania nowych produktów -->
-                    <button class="btn-add-person neo-button-add" onclick="addProductCard()">
-                        <span>＋</span> Dodaj kolejny produkt
-                    </button>
-                    
-                    <hr class="separator">
-                    
-                    <button class="btn neo-button" onclick="showManualSettings()">
-                        <span class="btn-icon">▶️</span>
-                        <span class="btn-text">Dalej</span>
-                    </button>
+                    <div id="manual-step-settings" class="app-step" style="display:none;">
+                        <h3>Krok 2: Ustawienia i Style</h3>
+                        <!-- Formularze ustawień i stylów dla trybu ręcznego -->
+                    </div>
                 </div>
 
-                <!-- Szablon dla pojedynczej karty produktu (ukryty) -->
-                <template id="productCardTemplate">
-                    <div class="product-card">
-                        <div class="product-card-header">
-                            <h4 class="product-card-title">Produkt #<span class="product-number">1</span></h4>
-                            <input type="text" class="product-name-input neo-input" placeholder="Wpisz nazwę produktu (opcjonalnie)">
-                            <button class="btn-remove-product" title="Usuń produkt">✕</button>
-                        </div>
-                        <div class="product-card-body">
-                            <div class="drop-zone" tabindex="0">
-                                <span class="drop-zone-prompt">Przeciągnij i upuść do 4 zdjęć lub kliknij, aby wybrać</span>
-                                <input type="file" class="drop-zone-input" multiple accept="image/*" style="display: none;">
-                            </div>
-                            <div class="image-previews"></div>
-                        </div>
-                    </div>
-                </template>
-
-
-                <div id="manual-step-settings" style="display:none;">
-                    <h3>Krok 2: Ustawienia Obrazów</h3>
-                    <p>Wybierz globalne ustawienia, które zostaną zastosowane do wszystkich dodanych produktów.</p>
-                    <div class="settings-grid">
-                        <div class="input-group">
-                            <label class="input-label" for="manualResolution">Rozdzielczość</label>
-                            <select id="manualResolution" class="input-field neo-input">
-                                <option value="1K">1K (~1024px)</option>
-                                <option value="2K">2K (~2048px)</option>
-                                <option value="4K">4K (~4096px)</option>
-                            </select>
-                        </div>
-                        <div class="input-group">
-                            <label class="input-label" for="manualAspectRatio">Proporcje</label>
-                            <select id="manualAspectRatio" class="input-field neo-input">
-                                <option value="1:1">1:1 (Kwadrat)</option>
-                                <option value="16:9">16:9 (Poziom)</option>
-                                <option value="9:16">9:16 (Pion)</option>
-                                <option value="4:5">4:5 (Instagram)</option>
-                                <option value="3:2">3:2 (Fotografia)</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="input-group">
-                        <label class="input-label" for="manualStyle1">Styl 1 (np. "Clean studio lighting, on a white pedestal")</label>
-                        <input type="text" id="manualStyle1" class="input-field neo-input" placeholder="Wpisz pierwszy styl...">
-                    </div>
-                    <div class="input-group">
-                        <label class="input-label" for="manualStyle2">Styl 2 (np. "In a real-life setting, on a wooden table, morning light")</label>
-                        <input type="text" id="manualStyle2" class="input-field neo-input" placeholder="Wpisz drugi styl...">
-                    </div>
-                    <button id="manualGenerateBtn" class="btn neo-button" onclick="handleManualSubmit()">
-                        <span class="btn-icon">🚀</span>
-                        <span class="btn-text">Generuj Kreacje</span>
-                    </button>
-                </div>
-
-                <!-- Postęp i wyniki będą używać tych samych kontenerów co tryb XML -->
-                <!-- Krok 3: Postęp -->
-                <div id="manual-step-progress" style="display:none;">
+                <!-- KONTENERY NA POSTĘP I WYNIKI (WSPÓLNE) -->
+                <div id="progress-step" class="app-step" style="display:none;">
                     <h3>Przetwarzanie...</h3>
-                    <div class="progress-container">
-                        <div class="progress-bar neo-progress"><div class="progress-fill" id="manualProgressFill"></div></div>
-                        <div class="status-message" id="manualStatusMessage"></div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
                     </div>
+                    <div class="status-message" id="statusMessage"></div>
                 </div>
 
-                <!-- Krok 4: Wyniki -->
-                <div id="manual-step-results" style="display:none;">
+                <div id="results-step" class="app-step" style="display:none;">
                     <h3>Gotowe!</h3>
-                    <div id="manualDownloadSection"></div>
-                    <div id="manualErrorsSection" style="display:none; margin-top: 20px;">
-                        <h4 class="alert-error-title">Wystąpiły problemy podczas przetwarzania niektórych plików:</h4>
-                        <ul id="manualErrorsList" class="errors-list"></ul>
+                    <div id="downloadSection"></div>
+                    <div id="errorsSection" style="display:none;">
+                        <h4>Wystąpiły problemy:</h4>
+                        <ul id="errorsList"></ul>
                     </div>
                 </div>
-            </div>
 
-            <!-- ─── SHARED: Error message ────────────────────────────── -->
-            <div id="errorMessage" class="alert alert-error" style="display:none;"></div>
+                <!-- WSPÓLNY KOMUNIKAT O BŁĘDZIE -->
+                <div id="errorMessage" class="alert alert-error" style="display:none;"></div>
+
+            </div>
         </div>
+
+        <!-- Szablon dla karty produktu w trybie ręcznym -->
+        <template id="productCardTemplate">
+            <div class="product-card">
+                <div class="product-card-header">
+                    <h4>Produkt #<span class="product-number">1</span></h4>
+                    <input type="text" class="product-name-input form-input" placeholder="Nazwa produktu (opcjonalnie)">
+                    <button class="btn-remove-product" title="Usuń produkt">×</button>
+                </div>
+                <div class="drop-zone">
+                    <span>Przeciągnij i upuść do 4 zdjęć lub kliknij</span>
+                    <input type="file" class="drop-zone-input" multiple accept="image/*" style="display: none;">
+                </div>
+                <div class="image-previews"></div>
+            </div>
+        </template>
+
+    </div>
+</main>
     </div>
 
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
