@@ -31,7 +31,7 @@ client = genai.Client(
 
 # Modele AI
 TEXT_ANALYSIS_MODEL = "gemini-2.5-flash"
-IMAGE_GENERATION_MODEL = "gemini-3-pro-image" # IMAGE_GENERATION_MODEL = "gemini-3.1-flash-image-preview" # Nano Banana
+IMAGE_GENERATION_MODEL = "gemini-3.1-flash-image-preview" # Nano Banana
 
 # Foldery tymczasowe
 TEMP_FOLDER = 'temp_files'
