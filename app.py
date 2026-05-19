@@ -12,26 +12,24 @@ import re
 import httpx
 import xml.etree.ElementTree as ET
 import shutil
-from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime, timedelta
-import pathlib
-import atexit
+from dotenv import load_dotenv
 
+load_dotenv()
 
 app = Flask(__name__)
 
 # ============== KONFIGURACJA ==============
 
-# W chmurze (Render.com) ścieżkę do klucza podajesz w zmiennej GOOGLE_APPLICATION_CREDENTIALS
+# Automatycznie pobiera klucz z os.environ["GEMINI_API_KEY"]
 client = genai.Client(
     vertexai=True,
-    project="eco-league-496710-c0",
-    location="us-central1"
+    project="eco-league-496710-c0", # np. "kaman-marketing-ai-123"
+    location="us-central1"             # lokalizacja serwerów, us-central1 ma najszybciej nowości
 )
 
 # Modele AI
 TEXT_ANALYSIS_MODEL = "gemini-2.5-flash"
-IMAGE_GENERATION_MODEL = "gemini-2.5-flash-image" # Nano Banana
+IMAGE_GENERATION_MODEL = "gemini-3-pro-image-preview" # Nano Banana
 
 # Foldery tymczasowe
 TEMP_FOLDER = 'temp_files'
@@ -59,30 +57,6 @@ GLOBAL_SAFETY_SETTINGS = [
 
 
 # ============== FUNKCJE POMOCNICZE ==============
-
-def cleanup_old_sessions():
-    """Skanuje folder tymczasowy i usuwa sesje starsze niż 45 minut."""
-    print("🧹 Uruchamiam zadanie czyszczenia starych sesji (kryterium: 45 minut)...")
-    temp_path = pathlib.Path(TEMP_FOLDER)
-    cutoff = datetime.now() - timedelta(minutes=45)
-
-    for path in temp_path.iterdir():
-        if path.is_dir() and path.name.startswith('session_'):
-            try:
-                dir_time = datetime.fromtimestamp(path.stat().st_mtime)
-                if dir_time < cutoff:
-                    shutil.rmtree(path)
-                    print(f"🗑️ Usunięto starą sesję (starsza niż 45 min): {path.name}")
-            except Exception as e:
-                print(f"❌ Błąd podczas usuwania folderu {path.name}: {e}")
-        elif path.is_file() and path.name.startswith('kreacje_') and path.name.endswith('.zip'):
-             try:
-                file_time = datetime.fromtimestamp(path.stat().st_mtime)
-                if file_time < cutoff:
-                    os.remove(path)
-                    print(f"🗑️ Usunięto stary plik ZIP (starszy niż 45 min): {path.name}")
-             except Exception as e:
-                print(f"❌ Błąd podczas usuwania pliku {path.name}: {e}")
 
 def download_image_from_url(url, folder):
     try:
@@ -120,6 +94,10 @@ def parse_xml_for_image_urls(xml_path):
 # ============== LOGIKA AI ==============
 
 def analyze_product_for_two_prompts_xml(images_pil, product_name, styles=None):
+    """
+    Analiza zdjęcia wejściowego z inteligentnym uwzględnieniem stylów użytkownika.
+    Model tworzy gotowe prompty dla Nano Banana.
+    """
     if styles and any(styles):
         style_1 = styles[0] if len(styles) > 0 else ""
         style_2 = styles[1] if len(styles) > 1 else style_1
@@ -149,7 +127,7 @@ Nie dodawaj żadnych wstępów. Zwróć tylko 2 linijki tekstu, każda z nich to
             model=TEXT_ANALYSIS_MODEL,
             contents=contents,
             config=types.GenerateContentConfig(
-                safety_settings=GLOBAL_SAFETY_SETTINGS
+                safety_settings=GLOBAL_SAFETY_SETTINGS # Wyłączenie filtrów w analizie
             )
         )
         
@@ -163,20 +141,26 @@ Nie dodawaj żadnych wstępów. Zwróć tylko 2 linijki tekstu, każda z nich to
 
 
 def generate_gemini_image_sync(prompt, index, product_name, reference_image, resolution=None, aspect_ratio=None):
+    """
+    Wywołanie modelu Nano Banana do WYGENEROWANIA obrazu przy użyciu oficjalnego obiektu ImageConfig.
+    """
     safe_product_name = re.sub(r'[^\w\-_\.]', '', product_name)
     filename = f"{safe_product_name}_creative_{index}_{int(time.time())}.jpeg"
     
+    # 1. Przygotowujemy dedykowany słownik z parametrami obrazu
     img_params = {}
     if aspect_ratio:
         img_params['aspect_ratio'] = aspect_ratio
     if resolution:
         img_params['image_size'] = resolution
 
+    # 2. Tworzymy główną konfigurację
     gen_config = types.GenerateContentConfig(
         response_modalities=["IMAGE"],
         safety_settings=GLOBAL_SAFETY_SETTINGS
     )
     
+    # 3. Jeśli użytkownik podał parametry z frontendu, dołączamy oficjalny obiekt ImageConfig
     if img_params:
         gen_config.image_config = types.ImageConfig(**img_params)
     
@@ -184,11 +168,12 @@ def generate_gemini_image_sync(prompt, index, product_name, reference_image, res
         response = client.models.generate_content(
             model=IMAGE_GENERATION_MODEL,
             contents=[prompt, reference_image],
-            config=gen_config
+            config=gen_config # Czysty i zgodny ze specyfikacją Pydantic obiekt konfiguracyjny
         )
         
         img_bytes = None
         
+        # Bezpieczne sprawdzanie odpowiedzi i szukanie obrazu
         if hasattr(response, 'generated_images') and response.generated_images:
             img_bytes = response.generated_images[0].image.image_bytes
         elif response.candidates:
@@ -283,19 +268,30 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                     img.thumbnail((1024, 1024))
                     pil_img = img.convert('RGB')
                     
+                    # 1. Krok: Gemini odczytuje obrazek, łączy go ze stylami użytkownika i tworzy gotowe prompty
                     final_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name, styles)
 
+                    # Dodajemy krótką przerwę po analizie tekstu, aby rozłożyć zapytania do AI
+                    print(f"⏳ Czekam 3 sekundy po analizie tekstu (ochrona przed błędem 429)...")
+                    time.sleep(3)
+
+                    # 2. Krok: Nano Banana tworzy obrazki przekazując do Pydantic odpowiednie wymiary
                     for i, prompt in enumerate(final_prompts):
                         generated_image, filename = generate_gemini_image_sync(prompt, i, product_name, pil_img, resolution, aspect_ratio)
                         if generated_image and filename:
                             generated_image.save(os.path.join(output_folder, filename))
                             
+                        # Dodajemy dłuższą przerwę po KAŻDEJ operacji generowania obrazu
+                        print(f"⏳ Czekam 5 sekund po wygenerowaniu obrazu (ochrona przed błędem 429)...")
+                        time.sleep(5)
+
                 update_status(processed_increment=1)
-                
-                # Ochrona przed limitem 429 RESOURCE_EXHAUSTED w Vertex AI
-                print(f"⏳ Czekam 5 sekund przed przetworzeniem kolejnego produktu z XML...")
-                time.sleep(5)
-                
+
+                # Usunięto oryginalną, mniej precyzyjną pauzę. Nowe pauzy zostały dodane
+                # bezpośrednio po każdym zapytaniu do API AI w pętli powyżej.
+                # print(f"⏳ Czekam 5 sekund przed przetworzeniem kolejnego produktu z XML...")
+                # time.sleep(5)
+
             except Exception as e:
                 update_status(error_details={
                     'file': image_file,
@@ -378,14 +374,5 @@ def download_zip(filename):
     return send_file(filepath, as_attachment=True)
 
 if __name__ == '__main__':
-    # Konfiguracja i uruchomienie harmonogramu czyszczenia
-    scheduler = BackgroundScheduler()
-    # Uruchamiaj zadanie co 45 minut
-    scheduler.add_job(func=cleanup_old_sessions, trigger="interval", minutes=45)
-    scheduler.start()
-
-    # Zapewnienie, że harmonogram zostanie poprawnie zamknięty przy wyjściu z aplikacji
-    atexit.register(lambda: scheduler.shutdown())
-
     port = int(os.environ.get('PORT', 8003))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=True)
