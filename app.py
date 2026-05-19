@@ -98,22 +98,51 @@ def download_image_from_url(url, folder):
         print(f"❌ Błąd podczas pobierania {url}: {e}")
         return None
 
-def parse_xml_for_image_urls(xml_path):
-    urls = []
+def parse_xml_for_products_with_images(xml_path):
+    """Parsuje XML w poszukiwaniu produktów i ich obrazów, grupując je i limitując do 4 na produkt."""
+    products = []
     try:
         tree = ET.parse(xml_path)
         root = tree.getroot()
-        for elem in root.iter():
-            if 'image' in elem.tag.lower() and elem.text and elem.text.strip().startswith('http'):
-                 urls.append(elem.text.strip())
-            elif elem.get('url') and elem.get('url').strip().startswith('http'):
-                 urls.append(elem.get('url').strip())
 
-        # Usuń duplikaty z zachowaniem kolejności i zwróć tylko 10 pierwszych produktów.
-        unique_urls = list(dict.fromkeys(urls))
-        return unique_urls[:10]
+        # Wyszukaj tagów <item> lub <product> jako głównych kontenerów produktów
+        product_nodes = root.findall('.//item') + root.findall('.//product')
+
+        # Jeśli nie znaleziono, potraktuj cały dokument jako jeden produkt (dla prostszych XML-i)
+        if not product_nodes:
+            product_nodes = [root]
+
+        for i, prod_node in enumerate(product_nodes):
+            urls = []
+            # Znajdź wszystkie URL-e obrazów wewnątrz danego węzła produktu
+            for elem in prod_node.iter():
+                # Sprawdź tagi standardowe i z przestrzenią nazw Google
+                if elem.tag.endswith('image_link') or elem.tag.endswith('additional_image_link'):
+                    if elem.text and elem.text.strip().startswith('http'):
+                        urls.append(elem.text.strip())
+                # Ogólne sprawdzenie dla innych formatów XML
+                elif 'image' in elem.tag.lower() and elem.text and elem.text.strip().startswith('http'):
+                    urls.append(elem.text.strip())
+                elif elem.get('url') and elem.get('url').strip().startswith('http'):
+                    urls.append(elem.get('url').strip())
+
+            if urls:
+                unique_urls = list(dict.fromkeys(urls))
+
+                # Wyszukaj nazwę produktu
+                name_node = prod_node.find('.//title') or prod_node.find('.//g:title')
+                product_name = name_node.text if name_node is not None else f"produkt_{i+1}"
+
+                products.append({
+                    "name": product_name,
+                    "image_urls": unique_urls[:4]  # Limit do 4 obrazów na produkt
+                })
+
+        # Ogranicz liczbę produktów, aby uniknąć przeciążenia
+        return products[:10]
+
     except Exception as e:
-        print(f"❌ Błąd parsowania XML: {e}")
+        print(f"❌ Błąd parsowania XML w poszukiwaniu produktów: {e}")
         return []
 
 
@@ -162,7 +191,8 @@ Nie dodawaj żadnych wstępów. Zwróć tylko 2 linijki tekstu, każda z nich to
         raise Exception(f"Błąd analizy Gemini dla '{product_name}': {e}")
 
 
-def generate_gemini_image_sync(prompt, index, product_name, reference_image, resolution=None, aspect_ratio=None):
+def generate_gemini_image_sync(prompt, index, product_name, reference_images, resolution=None, aspect_ratio=None):
+    # Nazwa produktu jest już oczyszczona w wątku, ale dla pewności zostawiamy
     safe_product_name = re.sub(r'[^\w\-_\.]', '', product_name)
     filename = f"{safe_product_name}_creative_{index}_{int(time.time())}.jpeg"
     
@@ -181,9 +211,12 @@ def generate_gemini_image_sync(prompt, index, product_name, reference_image, res
         gen_config.image_config = types.ImageConfig(**img_params)
     
     try:
+        # Tworzymy zawartość, dodając prompt i wszystkie obrazy referencyjne
+        content_for_generation = [prompt] + reference_images
+
         response = client.models.generate_content(
             model=IMAGE_GENERATION_MODEL,
-            contents=[prompt, reference_image],
+            contents=content_for_generation,
             config=gen_config
         )
         
@@ -233,27 +266,30 @@ def xml_start_processing():
     xml_path = os.path.join(session_folder, 'original.xml')
     file.save(xml_path)
 
-    image_urls = parse_xml_for_image_urls(xml_path)
-    if not image_urls: return jsonify({'error': 'Nie znaleziono URLi obrazów w XML'}), 400
+    products = parse_xml_for_products_with_images(xml_path)
+    if not products: return jsonify({'error': 'Nie znaleziono produktów z obrazami w pliku XML.'}), 400
+
+    total_images_to_process = sum(len(p['image_urls']) for p in products)
 
     status_data = {
-        'status': 'pending', 'total_images': len(image_urls),
-        'processed_images': 0, 'image_urls': image_urls, 'errors': []
+        'status': 'pending', 'total_products': len(products), 'processed_products': 0,
+        'products': products, 'errors': [], 'total_images': total_images_to_process
     }
     with open(os.path.join(session_folder, 'status.json'), 'w') as f:
         json.dump(status_data, f)
 
-    return jsonify({'status': 'Sesja rozpoczęta', 'session_id': session_id, 'image_count': len(image_urls)})
+    return jsonify({'status': 'Sesja rozpoczęta', 'session_id': session_id, 'product_count': len(products), 'image_count': total_images_to_process})
 
 def run_generation_thread(session_id, resolution, aspect_ratio, styles):
     session_folder = os.path.join(TEMP_FOLDER, session_id)
     status_path = os.path.join(session_folder, 'status.json')
 
+    # Zmieniamy 'processed_images' na 'processed_products'
     def update_status(status=None, processed_increment=0, error_details=None):
         with open(status_path, 'r+') as f:
             data = json.load(f)
             if status: data['status'] = status
-            if processed_increment: data['processed_images'] += processed_increment
+            if processed_increment: data['processed_products'] += processed_increment
             if error_details: data['errors'].append(error_details)
             f.seek(0); json.dump(data, f); f.truncate()
 
@@ -264,51 +300,66 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
         os.makedirs(feed_folder, exist_ok=True); os.makedirs(output_folder, exist_ok=True)
 
         with open(status_path, 'r') as f: status_data = json.load(f)
-        for url in status_data['image_urls']:
-            if not download_image_from_url(url, feed_folder):
-                update_status(error_details={
-                    'source_url': url,
-                    'message': 'Nie udało się pobrać obrazu z podanego URL.',
-                    'step': 'download'
-                })
+        for product in status_data['products']:
+            product_name = product['name']
+            image_urls = product['image_urls']
+
+            downloaded_images_paths = []
+            for url in image_urls:
+                img_path = download_image_from_url(url, feed_folder)
+                if img_path:
+                    downloaded_images_paths.append(img_path)
+                else:
+                    update_status(error_details={
+                        'source_url': url,
+                        'product_name': product_name,
+                        'message': 'Nie udało się pobrać obrazu z podanego URL.',
+                        'step': 'download'
+                    })
         
-        image_files = [f for f in os.listdir(feed_folder) if os.path.isfile(os.path.join(feed_folder, f))]
-
-        for image_file in image_files:
-            try:
-                image_path = os.path.join(feed_folder, image_file)
-                product_name = os.path.splitext(image_file)[0]
-                with Image.open(image_path) as img:
-                    # Optymalizacja RAM: Zmniejszamy obraz przed analizą
-                    img.thumbnail((1024, 1024))
-                    pil_img = img.convert('RGB')
-                    
-                    final_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name, styles)
-
-                    # Zwiększamy przerwę po analizie tekstu
-                    print(f"⏳ Czekam 5 sekund po analizie tekstu (ochrona przed błędem 429)...")
-                    time.sleep(5)
-
-                    for i, prompt in enumerate(final_prompts):
-                        generated_image, filename = generate_gemini_image_sync(prompt, i, product_name, pil_img, resolution, aspect_ratio)
-                        if generated_image and filename:
-                            generated_image.save(os.path.join(output_folder, filename))
-                        
-                        # Znacząco zwiększamy przerwę po generowaniu obrazu - to kluczowa zmiana
-                        print(f"⏳ Czekam 10 sekund po wygenerowaniu obrazu (ochrona przed błędem 429)...")
-                        time.sleep(10)
-                            
+            if not downloaded_images_paths:
+                update_status(error_details={
+                    'product_name': product_name,
+                    'message': 'Brak obrazów referencyjnych dla produktu po próbie pobrania.',
+                    'step': 'ai_processing'
+                })
+                # Inkrementujemy licznik, aby pasek postępu szedł do przodu
                 update_status(processed_increment=1)
-                
+                continue
+            try:
+                pil_images = []
+                for img_path in downloaded_images_paths:
+                    with Image.open(img_path) as img:
+                        img.thumbnail((1024, 1024))
+                        pil_images.append(img.convert('RGB'))
+
+                safe_product_name = re.sub(r'[^\w\-_\.]', '', product_name)
+
+                final_prompts = analyze_product_for_two_prompts_xml(pil_images, product_name, styles)
+
+                print(f"⏳ Czekam 5 sekund po analizie tekstu...")
+                time.sleep(5)
+
+                for i, prompt in enumerate(final_prompts):
+                    # Przekazujemy listę obrazów PIL jako obrazy referencyjne
+                    generated_image, filename = generate_gemini_image_sync(prompt, i, safe_product_name, pil_images, resolution, aspect_ratio)
+                    if generated_image and filename:
+                        generated_image.save(os.path.join(output_folder, filename))
+
+                    print(f"⏳ Czekam 10 sekund po wygenerowaniu obrazu...")
+                    time.sleep(10)
+
+                update_status(processed_increment=1)
             except Exception as e:
                 update_status(error_details={
-                    'file': image_file,
+                    'product_name': product_name,
                     'message': str(e),
                     'step': 'ai_processing'
                 })
-        
-        update_status(status='complete')
+                # Również inkrementujemy, aby kontynuować
+                update_status(processed_increment=1)
 
+            update_status(status='complete')
     except Exception as e:
         update_status(status='failed', error_details={'message': str(e), 'step': 'general'})
 
@@ -318,7 +369,7 @@ def xml_generate_creations():
     session_id = data.get('session_id')
     if not session_id or not os.path.exists(os.path.join(TEMP_FOLDER, session_id)):
         return jsonify({'error': 'Nieprawidłowe ID sesji'}), 404
-    
+
     args = (session_id, data.get('resolution'), data.get('aspect_ratio'), data.get('styles'))
     thread = threading.Thread(target=run_generation_thread, args=args)
     thread.start()
@@ -360,8 +411,8 @@ def download_zip(filename):
                 os.remove(filepath)
             except OSError as e:
                 print(f"Błąd podczas usuwania pliku zip {filepath}: {e}")
-            return response
-        return send_file(filepath, as_attachment=True)
+        return response
+    return send_file(filepath, as_attachment=True)
 
     session_id = match.group(1)
     session_folder = os.path.join(TEMP_FOLDER, session_id)
@@ -393,4 +444,3 @@ if __name__ == '__main__':
 
     port = int(os.environ.get('PORT', 8003))
     app.run(host='0.0.0.0', port=port, debug=False)
-
