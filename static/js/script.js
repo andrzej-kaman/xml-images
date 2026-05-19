@@ -3,7 +3,7 @@ let currentMode = 'xml'; // 'xml' | 'upload'
 
 // State for the XML multi-step workflow
 let xmlState = {
-    sessionId: null, imageUrls: [], totalImages: 0,
+    sessionId: null, imageUrls: [], totalImages: 0, totalProducts: 0,
     settings: { resolution: '1K', aspect_ratio: '1:1', styles: ['', ''] },
     status: 'idle', progress: 0, pollInterval: null
 };
@@ -57,6 +57,7 @@ async function handleXmlUpload() {
 
         xmlState.sessionId = data.session_id;
         xmlState.totalImages = data.image_count;
+        xmlState.totalProducts = data.product_count;
         xmlState.status = 'settings';
         document.getElementById('settings-image-count').textContent = data.image_count;
         showXmlStep('settings');
@@ -111,11 +112,11 @@ async function pollForStatus() {
 
         const data = await response.json();
 
-        const progress = data.total_images > 0 ? (data.processed_images / data.total_images) * 100 : 0;
+        const progress = data.total_products > 0 ? (data.processed_products / data.total_products) * 100 : 0;
         const progressBar = document.getElementById('xmlProgressFill');
         const statusMessage = document.getElementById('xmlStatusMessage');
         if(progressBar) progressBar.style.width = `${progress.toFixed(0)}%`;
-        if(statusMessage) statusMessage.textContent = `Przetworzono ${data.processed_images} z ${data.total_images}`;
+        if(statusMessage) statusMessage.textContent = `Przetworzono ${data.processed_products} z ${data.total_products}`;
 
         if (data.status === 'complete' || data.status === 'failed') {
             clearInterval(xmlState.pollInterval);
