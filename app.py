@@ -309,19 +309,16 @@ def manual_start_processing():
 
     try:
         products = []
-        # Używamy request.form.get() do bezpiecznego odczytu, aby uniknąć błędów
         i = 0
         while True:
-            product_name_key = f'product_{i}_name'
-            if product_name_key not in request.form:
+            # Sprawdzamy, czy istnieje przynajmniej jeden plik dla tego indeksu produktu
+            file_key_check = f'product_{i}_file_0'
+            if file_key_check not in request.files:
                 break
-            
-            product_name = request.form.get(product_name_key)
-            if not product_name:
-                i += 1
-                continue # Pomiń produkty bez nazwy
 
-            # Zbieranie plików dla danego produktu
+            # Automatycznie generujemy nazwę produktu
+            product_name = f"Produkt {i + 1}"
+
             image_paths = []
             j = 0
             while True:
@@ -331,7 +328,6 @@ def manual_start_processing():
                 
                 file = request.files.get(file_key)
                 if file and file.filename:
-                    # Zabezpieczenie nazwy pliku i zapis
                     safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '', os.path.basename(file.filename))
                     file_path = os.path.join(feed_folder, f"{product_name.replace(' ', '_')}_{j}_{safe_filename}")
                     file.save(file_path)
