@@ -316,8 +316,8 @@ def manual_start_processing():
             if file_key_check not in request.files:
                 break
 
-            # Automatycznie generujemy nazwę produktu
-            product_name = f"Produkt {i + 1}"
+            # Pobieramy nazwę produktu z formularza lub generujemy domyślną
+            product_name = request.form.get(f'product_{i}_name', f"Produkt {i + 1}")
 
             image_paths = []
             j = 0
