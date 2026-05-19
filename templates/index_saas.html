@@ -137,23 +137,48 @@
 
             <!-- ─── MODE: UPLOAD (MANUAL) ───────────────────────────── -->
             <div id="mode-upload" style="display:none;">
+
+                <!-- Krok 1: Dodawanie produktów (nowa wersja) -->
                 <div id="manual-step-products">
                     <div class="instructions">
                         <h3>Krok 1: Dodaj produkty ręcznie</h3>
                         <p>Użyj tej opcji, jeśli zamiast pliku XML wolisz ręcznie dodać produkty. Możesz dodać maksymalnie 10 produktów, każdy z maksymalnie 4 zdjęciami.</p>
                     </div>
-                    <div id="productsContainer">
-                        <!-- Pola dla produktów będą dodawane dynamicznie tutaj -->
-                    </div>
-                    <button class="btn-add-person neo-button-add" onclick="addProductBlock()">
+                    
+                    <!-- Kontener na dynamicznie dodawane karty produktów -->
+                    <div id="productsContainer"></div>
+
+                    <!-- Przycisk do dodawania nowych produktów -->
+                    <button class="btn-add-person neo-button-add" onclick="addProductCard()">
                         <span>＋</span> Dodaj kolejny produkt
                     </button>
+                    
                     <hr class="separator">
+                    
                     <button class="btn neo-button" onclick="showManualSettings()">
                         <span class="btn-icon">▶️</span>
                         <span class="btn-text">Dalej</span>
                     </button>
                 </div>
+
+                <!-- Szablon dla pojedynczej karty produktu (ukryty) -->
+                <template id="productCardTemplate">
+                    <div class="product-card">
+                        <div class="product-card-header">
+                            <h4 class="product-card-title">Produkt #<span class="product-number">1</span></h4>
+                            <input type="text" class="product-name-input neo-input" placeholder="Wpisz nazwę produktu (opcjonalnie)">
+                            <button class="btn-remove-product" title="Usuń produkt">✕</button>
+                        </div>
+                        <div class="product-card-body">
+                            <div class="drop-zone" tabindex="0">
+                                <span class="drop-zone-prompt">Przeciągnij i upuść do 4 zdjęć lub kliknij, aby wybrać</span>
+                                <input type="file" class="drop-zone-input" multiple accept="image/*" style="display: none;">
+                            </div>
+                            <div class="image-previews"></div>
+                        </div>
+                    </div>
+                </template>
+
 
                 <div id="manual-step-settings" style="display:none;">
                     <h3>Krok 2: Ustawienia Obrazów</h3>

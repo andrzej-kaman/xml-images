@@ -21,7 +21,7 @@ function switchMode(mode) {
     hideError();
 
     if (mode === 'upload' && manualState.products.length === 0) {
-        addProductBlock(); // Add the first product block automatically
+        addProductCard(); // Use the new function
     }
 }
 
@@ -192,63 +192,121 @@ async function handleStylesSubmit() {
     }
 }
 
-// ==================== MANUAL UPLOAD MODE ====================
+// ==================== MANUAL UPLOAD MODE (NEW) ====================
 
-function addProductBlock() {
+function addProductCard() {
     if (manualState.products.length >= 10) {
         showError("Osiągnięto maksymalną liczbę 10 produktów.");
         return;
     }
-    const id = ++manualState.productCounter;
-    manualState.products.push({ id, files: [] });
 
-    const container = document.getElementById('productsContainer');
-    const block = document.createElement('div');
-    block.className = 'product-block-new'; // Nowa klasa dla stylizacji
-    block.id = `product-block-${id}`;
-    block.innerHTML = `
-        <div class="product-block-header-new">
-            <span class="badge-new">Produkt ${manualState.products.length}</span>
-            <button class="btn-remove-new" onclick="removeProductBlock(${id})" title="Usuń produkt">✕</button>
-        </div>
-        <div class="file-upload-area-new">
-            <input type="file" id="file-input-${id}" multiple accept="image/*" onchange="handleFileChange(${id}, this)" style="display:none;">
-            <label for="file-input-${id}" class="file-upload-label-new">
-                <span>📤 Wybierz od 1 do 4 zdjęć</span>
-            </label>
-            <div class="file-list" id="file-list-${id}"></div>
-        </div>
-    `;
-    container.appendChild(block);
+    const id = ++manualState.productCounter;
+    const productData = { id, name: '', files: [] };
+    manualState.products.push(productData);
+
+    const template = document.getElementById('productCardTemplate');
+    const card = template.content.cloneNode(true).firstElementChild;
+    card.dataset.id = id;
+
+    card.querySelector('.product-number').textContent = manualState.products.length;
+    
+    // --- Event Listeners ---
+    const removeBtn = card.querySelector('.btn-remove-product');
+    removeBtn.addEventListener('click', () => removeProductCard(id));
+
+    const nameInput = card.querySelector('.product-name-input');
+    nameInput.addEventListener('input', (e) => {
+        const product = manualState.products.find(p => p.id === id);
+        if(product) product.name = e.target.value;
+    });
+
+    const dropZone = card.querySelector('.drop-zone');
+    const fileInput = card.querySelector('.drop-zone-input');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+        handleFiles(id, e.target.files);
+        fileInput.value = ''; // Reset for re-uploading same file
+    });
+
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    });
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-over'));
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-over'));
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        handleFiles(id, e.dataTransfer.files);
+    });
+
+    document.getElementById('productsContainer').appendChild(card);
 }
 
-function removeProductBlock(id) {
+function removeProductCard(id) {
     manualState.products = manualState.products.filter(p => p.id !== id);
-    document.getElementById(`product-block-${id}`).remove();
-    // Re-render badges to fix numbering
-    const badges = document.querySelectorAll('#productsContainer .badge-new');
-    badges.forEach((badge, index) => {
-        badge.textContent = `Produkt ${index + 1}`;
+    document.querySelector(`.product-card[data-id='${id}']`).remove();
+
+    // Re-number the remaining cards
+    document.querySelectorAll('.product-card').forEach((card, index) => {
+        card.querySelector('.product-number').textContent = index + 1;
     });
 }
 
-function handleFileChange(id, input) {
-    const product = manualState.products.find(p => p.id === id);
+function handleFiles(productId, files) {
+    const product = manualState.products.find(p => p.id === productId);
     if (!product) return;
 
-    product.files = Array.from(input.files).slice(0, 4); // Limit to 4 files
+    const newFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
+    const totalFiles = product.files.length + newFiles.length;
 
-    const fileList = document.getElementById(`file-list-${id}`);
-    fileList.innerHTML = ''; // Clear previous list
-    if (product.files.length > 0) {
-        const list = document.createElement('ul');
-        product.files.forEach(file => {
-            const listItem = document.createElement('li');
-            listItem.textContent = file.name;
-            list.appendChild(listItem);
-        });
-        fileList.appendChild(list);
+    if (totalFiles > 4) {
+        showError("Można dodać maksymalnie 4 zdjęcia na produkt.");
+        // Trim the excess files if user selects too many at once
+        const needed = 4 - product.files.length;
+        if (needed > 0) {
+            product.files.push(...newFiles.slice(0, needed));
+        }
+    } else {
+        product.files.push(...newFiles);
     }
+    
+    updatePreviews(productId);
+}
+
+function updatePreviews(productId) {
+    const product = manualState.products.find(p => p.id === productId);
+    if (!product) return;
+
+    const card = document.querySelector(`.product-card[data-id='${productId}']`);
+    const previewContainer = card.querySelector('.image-previews');
+    previewContainer.innerHTML = '';
+
+    product.files.forEach((file, index) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const div = document.createElement('div');
+            div.className = 'preview-image-container';
+            div.innerHTML = `
+                <img src="${e.target.result}" class="preview-image" alt="${file.name}">
+                <button class="remove-image-btn" data-index="${index}">×</button>
+            `;
+            div.querySelector('.remove-image-btn').addEventListener('click', () => {
+                product.files.splice(index, 1);
+                updatePreviews(productId);
+            });
+            previewContainer.appendChild(div);
+        };
+        reader.readAsDataURL(file);
+    });
 }
 
 function showManualSettings() {
@@ -256,14 +314,20 @@ function showManualSettings() {
     if (manualState.products.length === 0) {
         return showError('Proszę dodać przynajmniej jeden produkt.');
     }
-    for (const product of manualState.products) {
+    let allOk = true;
+    for (const [index, product] of manualState.products.entries()) {
+        const card = document.querySelector(`.product-card[data-id='${product.id}']`);
+        card.classList.remove('has-error');
+
         if (product.files.length === 0) {
-            // Znajdź numer produktu na podstawie jego ID w stanie
-            const productIndex = manualState.products.findIndex(p => p.id === product.id) + 1;
-            return showError(`Produkt #${productIndex} nie ma żadnych zdjęć.`);
+            card.classList.add('has-error');
+            showError(`Produkt #${index + 1} nie ma żadnych zdjęć.`);
+            allOk = false;
         }
     }
-    showStep('upload', 'settings');
+    if (allOk) {
+        showStep('upload', 'settings');
+    }
 }
 
 async function handleManualSubmit() {
@@ -273,26 +337,21 @@ async function handleManualSubmit() {
     if (!style1 || !style2) return showError('Proszę wpisać oba style.');
 
     const formData = new FormData();
-    // Uwaga: resolution i aspect_ratio są teraz pobierane bezpośrednio w backendzie
-    // z endpointu /api/xml/generate, więc nie trzeba ich tu dodawać.
 
-    // Zmiana: dane o produktach są wysyłane do /api/manual/start
     manualState.products.forEach((product, pIndex) => {
-        // Nie wysyłamy już nazwy, serwer ją wygeneruje
+        // The backend doesn't use the name, but we have it in `product.name` if needed.
         product.files.forEach((file, fIndex) => {
             formData.append(`product_${pIndex}_file_${fIndex}`, file);
         });
     });
 
     try {
-        // Krok 1: Utwórz sesję i wgraj pliki
         const response = await fetch('/api/manual/start', { method: 'POST', body: formData });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Błąd serwera przy tworzeniu sesji.');
         
         manualState.sessionId = data.session_id;
         
-        // Krok 2: Uruchom generowanie (tak jak w trybie XML)
         const generatePayload = {
             session_id: manualState.sessionId,
             resolution: document.getElementById('manualResolution').value,
@@ -315,7 +374,6 @@ async function handleManualSubmit() {
         showStep('upload', 'settings');
     }
 }
-
 
 // ==================== UI HELPERS ====================
 function showError(message) {
