@@ -34,14 +34,35 @@
                 <!-- Krok 1: Upload pliku XML -->
                 <div id="xml-step-upload">
                     <div class="instructions">
-                        <h3>Krok 1: Wgraj plik XML</h3>
-                        <p>Wybierz lub przeciągnij plik XML z linkami do produktów, które chcesz przetworzyć.</p>
+                        <h3>Krok 1: Podaj źródło pliku XML</h3>
+                        <p>Wybierz jedną z dwóch opcji: wgraj plik z dysku lub podaj bezpośredni link do pliku XML.</p>
                     </div>
-                    <div class="input-group">
+
+                    <!-- Opcje wyboru źródła -->
+                    <div class="input-source-choice">
+                        <label>
+                            <input type="radio" name="xmlSource" value="file" checked onchange="toggleXmlSource()">
+                            Wgraj plik z dysku
+                        </label>
+                        <label>
+                            <input type="radio" name="xmlSource" value="url" onchange="toggleXmlSource()">
+                            Podaj link (URL)
+                        </label>
+                    </div>
+
+                    <!-- Kontener dla uploadu pliku -->
+                    <div class="input-group" id="xml-source-file">
                         <label class="input-label" for="xmlFileInput">Plik XML</label>
                         <input type="file" id="xmlFileInput" class="input-field neo-input" accept=".xml">
                     </div>
-                     <button id="startXmlBtn" class="btn neo-button" onclick="handleXmlUpload()">
+
+                    <!-- Kontener dla linku URL -->
+                    <div class="input-group" id="xml-source-url" style="display: none;">
+                        <label class="input-label" for="xmlUrlInput">Link do pliku XML</label>
+                        <input type="text" id="xmlUrlInput" class="input-field neo-input" placeholder="https://przyklad.pl/feed.xml">
+                    </div>
+
+                    <button id="startXmlBtn" class="btn neo-button" onclick="handleXmlUpload()">
                         <span class="btn-icon">▶️</span>
                         <span class="btn-text">Rozpocznij</span>
                     </button>
@@ -121,7 +142,7 @@
                     <ol>
                         <li>Dodaj od 1 do 4 zdjęć osoby oraz wpisz jej zawód/opis.</li>
                         <li>Kliknij <strong>+ Dodaj kolejną osobę</strong>, aby dodać następny zestaw.</li>
-                        <li>Kliknij „Generuj Kreacje" – AI wygeneruje profesjonalne zdjęcia.</li>
+                        <li>Kliknij „Generuj Kreacje” – AI wygeneruje profesjonalzne zdjęcia.</li>
                     </ol>
                 </div>
                 <div id="personsContainer"></div>

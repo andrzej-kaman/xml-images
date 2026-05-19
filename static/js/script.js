@@ -32,6 +32,17 @@ function switchMode(mode) {
 
 // ==================== XML WORKFLOW ====================
 
+function toggleXmlSource() {
+    const source = document.querySelector('input[name="xmlSource"]:checked').value;
+    if (source === 'file') {
+        document.getElementById('xml-source-file').style.display = 'block';
+        document.getElementById('xml-source-url').style.display = 'none';
+    } else {
+        document.getElementById('xml-source-file').style.display = 'none';
+        document.getElementById('xml-source-url').style.display = 'block';
+    }
+}
+
 function showXmlStep(step) {
     ['upload', 'settings', 'styles', 'progress', 'results'].forEach(s => {
         const el = document.getElementById(`xml-step-${s}`);
@@ -43,15 +54,31 @@ function showXmlStep(step) {
 
 async function handleXmlUpload() {
     hideError();
-    const fileInput = document.getElementById('xmlFileInput');
-    const file = fileInput.files[0];
-    if (!file) { return showError('Proszę wybrać plik XML.'); }
+    const source = document.querySelector('input[name="xmlSource"]:checked').value;
+    let formData = new FormData();
+    let body;
+    let headers = {};
 
-    const formData = new FormData();
-    formData.append('xml_file', file);
+    if (source === 'file') {
+        const fileInput = document.getElementById('xmlFileInput');
+        const file = fileInput.files[0];
+        if (!file) { return showError('Proszę wybrać plik XML.'); }
+        formData.append('xml_file', file);
+        body = formData;
+    } else { // source === 'url'
+        const urlInput = document.getElementById('xmlUrlInput');
+        const url = urlInput.value.trim();
+        if (!url) { return showError('Proszę wkleić link do pliku XML.'); }
+        body = JSON.stringify({ xml_url: url });
+        headers['Content-Type'] = 'application/json';
+    }
 
     try {
-        const response = await fetch('/api/xml/start', { method: 'POST', body: formData });
+        const response = await fetch('/api/xml/start', { 
+            method: 'POST', 
+            body: body,
+            headers: headers
+        });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Nieznany błąd serwera.');
 
