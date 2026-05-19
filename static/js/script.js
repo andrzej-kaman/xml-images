@@ -200,25 +200,24 @@ function addProductBlock() {
         return;
     }
     const id = ++manualState.productCounter;
-    manualState.products.push({ id, name: '', files: [] });
+    manualState.products.push({ id, files: [] });
 
     const container = document.getElementById('productsContainer');
     const block = document.createElement('div');
-    block.className = 'product-block';
+    block.className = 'product-block-new'; // Nowa klasa dla stylizacji
     block.id = `product-block-${id}`;
     block.innerHTML = `
-        <div class="product-block-header">
-            <span class="badge">${manualState.products.length}</span>
-            <input type="text" class="input-field neo-input product-name-input" placeholder="Wpisz nazwę produktu..." oninput="updateProductName(${id}, this.value)">
-            <button class="btn-remove-person" onclick="removeProductBlock(${id})" title="Usuń">✕</button>
+        <div class="product-block-header-new">
+            <span class="badge-new">Produkt ${manualState.products.length}</span>
+            <button class="btn-remove-new" onclick="removeProductBlock(${id})" title="Usuń produkt">✕</button>
         </div>
-        <div class="file-upload-area">
+        <div class="file-upload-area-new">
             <input type="file" id="file-input-${id}" multiple accept="image/*" onchange="handleFileChange(${id}, this)" style="display:none;">
-            <label for="file-input-${id}" class="file-upload-label">
-                <span>📷 Kliknij, aby dodać od 1 do 4 zdjęć</span>
+            <label for="file-input-${id}" class="file-upload-label-new">
+                <span>📤 Wybierz od 1 do 4 zdjęć</span>
             </label>
+            <div class="file-list" id="file-list-${id}"></div>
         </div>
-        <div class="image-preview-grid" id="preview-grid-${id}"></div>
     `;
     container.appendChild(block);
 }
@@ -227,15 +226,10 @@ function removeProductBlock(id) {
     manualState.products = manualState.products.filter(p => p.id !== id);
     document.getElementById(`product-block-${id}`).remove();
     // Re-render badges to fix numbering
-    const badges = document.querySelectorAll('#productsContainer .badge');
+    const badges = document.querySelectorAll('#productsContainer .badge-new');
     badges.forEach((badge, index) => {
-        badge.textContent = index + 1;
+        badge.textContent = `Produkt ${index + 1}`;
     });
-}
-
-function updateProductName(id, name) {
-    const product = manualState.products.find(p => p.id === id);
-    if (product) product.name = name;
 }
 
 function handleFileChange(id, input) {
@@ -244,18 +238,17 @@ function handleFileChange(id, input) {
 
     product.files = Array.from(input.files).slice(0, 4); // Limit to 4 files
 
-    const previewGrid = document.getElementById(`preview-grid-${id}`);
-    previewGrid.innerHTML = '';
-    product.files.forEach(file => {
-        const reader = new FileReader();
-        reader.onload = e => {
-            const img = document.createElement('img');
-            img.src = e.target.result;
-            img.className = 'image-preview';
-            previewGrid.appendChild(img);
-        };
-        reader.readAsDataURL(file);
-    });
+    const fileList = document.getElementById(`file-list-${id}`);
+    fileList.innerHTML = ''; // Clear previous list
+    if (product.files.length > 0) {
+        const list = document.createElement('ul');
+        product.files.forEach(file => {
+            const listItem = document.createElement('li');
+            listItem.textContent = file.name;
+            list.appendChild(listItem);
+        });
+        fileList.appendChild(list);
+    }
 }
 
 function showManualSettings() {
@@ -264,11 +257,10 @@ function showManualSettings() {
         return showError('Proszę dodać przynajmniej jeden produkt.');
     }
     for (const product of manualState.products) {
-        if (!product.name.trim()) {
-            return showError(`Produkt #${product.id} nie ma nazwy.`);
-        }
         if (product.files.length === 0) {
-            return showError(`Produkt "${product.name}" nie ma żadnych zdjęć.`);
+            // Znajdź numer produktu na podstawie jego ID w stanie
+            const productIndex = manualState.products.findIndex(p => p.id === product.id) + 1;
+            return showError(`Produkt #${productIndex} nie ma żadnych zdjęć.`);
         }
     }
     showStep('upload', 'settings');
@@ -281,39 +273,43 @@ async function handleManualSubmit() {
     if (!style1 || !style2) return showError('Proszę wpisać oba style.');
 
     const formData = new FormData();
-    formData.append('resolution', document.getElementById('manualResolution').value);
-    formData.append('aspect_ratio', document.getElementById('manualAspectRatio').value);
-    formData.append('styles', JSON.stringify([style1, style2]));
+    // Uwaga: resolution i aspect_ratio są teraz pobierane bezpośrednio w backendzie
+    // z endpointu /api/xml/generate, więc nie trzeba ich tu dodawać.
 
+    // Zmiana: dane o produktach są wysyłane do /api/manual/start
     manualState.products.forEach((product, pIndex) => {
-        formData.append(`product_${pIndex}_name`, product.name);
+        // Nie wysyłamy już nazwy, serwer ją wygeneruje
         product.files.forEach((file, fIndex) => {
             formData.append(`product_${pIndex}_file_${fIndex}`, file);
         });
     });
 
     try {
+        // Krok 1: Utwórz sesję i wgraj pliki
         const response = await fetch('/api/manual/start', { method: 'POST', body: formData });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Błąd serwera');
+        if (!response.ok) throw new Error(data.error || 'Błąd serwera przy tworzeniu sesji.');
         
         manualState.sessionId = data.session_id;
         
-        // The next call to generate is the same as the XML one, so we can reuse it.
+        // Krok 2: Uruchom generowanie (tak jak w trybie XML)
+        const generatePayload = {
+            session_id: manualState.sessionId,
+            resolution: document.getElementById('manualResolution').value,
+            aspect_ratio: document.getElementById('manualAspectRatio').value,
+            styles: [style1, style2]
+        };
+
         const generateResponse = await fetch('/api/xml/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                session_id: manualState.sessionId,
-                resolution: document.getElementById('manualResolution').value,
-                aspect_ratio: document.getElementById('manualAspectRatio').value,
-                styles: [style1, style2]
-             })
+            body: JSON.stringify(generatePayload)
         });
         if (!generateResponse.ok) throw new Error((await generateResponse.json()).error || 'Błąd rozpoczęcia generowania.');
 
         showStep('upload', 'progress');
         startPolling('upload');
+
     } catch (err) {
         showError(err.message);
         showStep('upload', 'settings');
