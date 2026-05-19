@@ -99,50 +99,58 @@ def download_image_from_url(url, folder):
         return None
 
 def parse_xml_for_products_with_images(xml_path):
-    """Parsuje XML w poszukiwaniu produktów i ich obrazów, grupując je i limitując do 4 na produkt."""
+    """Parsuje XML w poszukiwaniu produktów i ich obrazów, obsługując przestrzeń nazw 'g'."""
     products = []
     try:
+        # Zarejestruj przestrzeń nazw, aby uniknąć błędów 'prefix not found'
+        namespaces = {'g': 'http://base.google.com/ns/1.0'}
+        ET.register_namespace('g', namespaces['g'])
+
         tree = ET.parse(xml_path)
         root = tree.getroot()
 
-        # Wyszukaj tagów <item> lub <product> jako głównych kontenerów produktów
+        # Wyszukaj tagów <item> lub <product>
         product_nodes = root.findall('.//item') + root.findall('.//product')
 
-        # Jeśli nie znaleziono, potraktuj cały dokument jako jeden produkt (dla prostszych XML-i)
         if not product_nodes:
             product_nodes = [root]
 
         for i, prod_node in enumerate(product_nodes):
             urls = []
-            # Znajdź wszystkie URL-e obrazów wewnątrz danego węzła produktu
+            # Znajdź wszystkie URL-e obrazów wewnątrz węzła produktu
+            # Szukamy tagów zawierających 'image_link' lub 'image'
             for elem in prod_node.iter():
-                # Sprawdź tagi standardowe i z przestrzenią nazw Google
-                if elem.tag.endswith('image_link') or elem.tag.endswith('additional_image_link'):
+                tag = elem.tag.split('}')[-1] # Usuń przestrzeń nazw z tagu, jeśli istnieje
+                if 'image_link' in tag or 'additional_image_link' in tag:
                     if elem.text and elem.text.strip().startswith('http'):
                         urls.append(elem.text.strip())
-                # Ogólne sprawdzenie dla innych formatów XML
-                elif 'image' in elem.tag.lower() and elem.text and elem.text.strip().startswith('http'):
-                    urls.append(elem.text.strip())
+                elif 'image' in tag and elem.text and elem.text.strip().startswith('http'):
+                     urls.append(elem.text.strip())
                 elif elem.get('url') and elem.get('url').strip().startswith('http'):
-                    urls.append(elem.get('url').strip())
+                     urls.append(elem.get('url').strip())
 
             if urls:
                 unique_urls = list(dict.fromkeys(urls))
 
-                # Wyszukaj nazwę produktu
-                name_node = prod_node.find('.//title') or prod_node.find('.//g:title')
-                product_name = name_node.text if name_node is not None else f"produkt_{i+1}"
+                # Wyszukaj nazwę produktu, uwzględniając przestrzeń nazw
+                name_node = prod_node.find('title') or prod_node.find('g:title', namespaces)
+                if name_node is None: # Spróbuj znaleźć bez 'g:' jeśli pierwsze zawiodło
+                     name_node = prod_node.find('.//title')
+
+                product_name = name_node.text.strip() if name_node is not None and name_node.text else f"Produkt {i+1}"
 
                 products.append({
                     "name": product_name,
-                    "image_urls": unique_urls[:4]  # Limit do 4 obrazów na produkt
+                    "image_urls": unique_urls[:4]
                 })
 
-        # Ogranicz liczbę produktów, aby uniknąć przeciążenia
         return products[:10]
 
+    except ET.ParseError as e:
+        print(f"❌ Błąd parsowania XML: {e}")
+        return []
     except Exception as e:
-        print(f"❌ Błąd parsowania XML w poszukiwaniu produktów: {e}")
+        print(f"❌ Nieoczekiwany błąd w parse_xml_for_products_with_images: {e}")
         return []
 
 
@@ -310,12 +318,12 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                 if img_path:
                     downloaded_images_paths.append(img_path)
                 else:
-                    update_status(error_details={
+                update_status(error_details={
                         'source_url': url,
                         'product_name': product_name,
                         'message': 'Nie udało się pobrać obrazu z podanego URL.',
                         'step': 'download'
-                    })
+                })
         
             if not downloaded_images_paths:
                 update_status(error_details={
@@ -359,8 +367,8 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                 # Również inkrementujemy, aby kontynuować
                 update_status(processed_increment=1)
 
-            update_status(status='complete')
-    except Exception as e:
+        update_status(status='complete')
+        except Exception as e:
         update_status(status='failed', error_details={'message': str(e), 'step': 'general'})
 
 @app.route('/api/xml/generate', methods=['POST'])
