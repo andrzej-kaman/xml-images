@@ -271,87 +271,96 @@ def xml_start_processing():
     xml_path = os.path.join(session_folder, 'original.xml')
 
     try:
-        # Sprawdzamy, czy przesłano URL w ciele JSON
         if request.is_json and 'xml_url' in request.json:
             xml_url = request.json['xml_url']
-            if not xml_url:
-                return jsonify({'error': 'Podano pusty link (URL)'}), 400
-
-            print(f"INFO: Otrzymano żądanie z URL: {xml_url}")
-            try:
-                response = httpx.get(xml_url, follow_redirects=True, timeout=20)
-                response.raise_for_status()
-                
-                # Sprawdzamy, czy content-type jest XML
-                content_type = response.headers.get('content-type', '').lower()
-                if 'xml' not in content_type:
-                    print(f"WARN: Content-Type odpowiedzi to '{content_type}', ale kontynuuję przetwarzanie.")
-
-                # Zapisujemy pobraną treść
-                with open(xml_path, 'wb') as f:
-                    f.write(response.content)
-                print(f"INFO: Pomyślnie pobrano i zapisano plik XML z URL.")
-
-            except httpx.RequestError as e:
-                print(f"ERROR: Błąd podczas pobierania pliku z URL: {e}")
-                return jsonify({'error': f'Nie udało się pobrać pliku z podanego adresu URL: {e}'}), 500
-            except Exception as e:
-                print(f"ERROR: Nieoczekiwany błąd przy obsłudze URL: {e}")
-                return jsonify({'error': 'Wystąpił wewnętrzny błąd serwera przy obsłudze URL.'}), 500
-
-        # Sprawdzamy, czy przesłano plik
+            if not xml_url: return jsonify({'error': 'Podano pusty link (URL)'}), 400
+            response = httpx.get(xml_url, follow_redirects=True, timeout=20)
+            response.raise_for_status()
+            with open(xml_path, 'wb') as f: f.write(response.content)
         elif 'xml_file' in request.files:
             file = request.files['xml_file']
-            if not file or not file.filename:
-                return jsonify({'error': 'Nie wybrano pliku do wgrania.'}), 400
-            if not file.filename.endswith('.xml'):
-                return jsonify({'error': 'Wymagany jest plik z rozszerzeniem .xml'}), 400
-            
+            if not file or not file.filename or not file.filename.endswith('.xml'):
+                return jsonify({'error': 'Wymagany jest plik .xml'}), 400
             file.save(xml_path)
-            print(f"INFO: Pomyślnie zapisano wgrany plik XML.")
-
-        # Jeśli nie ma ani jednego, ani drugiego
         else:
             return jsonify({'error': 'Nie dostarczono pliku XML ani linku URL.'}), 400
 
-        # Wspólna część dla obu metod
         products = parse_xml_for_products_with_images(xml_path)
         if not products:
-            return jsonify({'error': 'Nie znaleziono prawidłowych produktów z obrazami w dostarczonym pliku XML.'}), 400
+            return jsonify({'error': 'Nie znaleziono produktów z obrazami w pliku XML.'}), 400
 
-        total_images_to_process = sum(len(p['image_urls']) for p in products)
         status_data = {
-            'status': 'pending',
-            'total_products': len(products),
-            'processed_products': 0,
-            'products': products,
-            'errors': [],
-            'total_images': total_images_to_process
+            'status': 'pending', 'total_products': len(products),
+            'processed_products': 0, 'products': products, 'errors': []
         }
-        with open(os.path.join(session_folder, 'status.json'), 'w') as f:
-            json.dump(status_data, f)
+        with open(os.path.join(session_folder, 'status.json'), 'w') as f: json.dump(status_data, f)
 
-        return jsonify({
-            'status': 'Sesja rozpoczęta',
-            'session_id': session_id,
-            'product_count': len(products),
-            'image_count': total_images_to_process
-        })
-
+        return jsonify({'session_id': session_id, 'product_count': len(products)})
     except Exception as e:
-        # Ogólna obsługa błędów, jeśli coś pójdzie nie tak na wczesnym etapie
-        print(f"FATAL: Krytyczny błąd w xml_start_processing: {e}")
-        # Warto usunąć folder sesji, jeśli został utworzony, a proces się nie powiódł
-        if os.path.exists(session_folder):
-            shutil.rmtree(session_folder)
-        return jsonify({'error': 'Wystąpił krytyczny błąd podczas inicjowania sesji.'}), 500
+        if os.path.exists(session_folder): shutil.rmtree(session_folder)
+        return jsonify({'error': f'Błąd inicjowania sesji XML: {e}'}), 500
 
+@app.route('/api/manual/start', methods=['POST'])
+def manual_start_processing():
+    session_id = f"session_{int(time.time())}"
+    session_folder = os.path.join(TEMP_FOLDER, session_id)
+    feed_folder = os.path.join(session_folder, 'feed')
+    os.makedirs(feed_folder, exist_ok=True)
+
+    try:
+        products = []
+        # Używamy request.form.get() do bezpiecznego odczytu, aby uniknąć błędów
+        i = 0
+        while True:
+            product_name_key = f'product_{i}_name'
+            if product_name_key not in request.form:
+                break
+            
+            product_name = request.form.get(product_name_key)
+            if not product_name:
+                i += 1
+                continue # Pomiń produkty bez nazwy
+
+            # Zbieranie plików dla danego produktu
+            image_paths = []
+            j = 0
+            while True:
+                file_key = f'product_{i}_file_{j}'
+                if file_key not in request.files:
+                    break
+                
+                file = request.files.get(file_key)
+                if file and file.filename:
+                    # Zabezpieczenie nazwy pliku i zapis
+                    safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '', os.path.basename(file.filename))
+                    file_path = os.path.join(feed_folder, f"{product_name.replace(' ', '_')}_{j}_{safe_filename}")
+                    file.save(file_path)
+                    image_paths.append(file_path)
+                j += 1
+            
+            if image_paths:
+                products.append({'name': product_name, 'image_paths': image_paths})
+            i += 1
+        
+        if not products:
+            return jsonify({'error': 'Nie dodano żadnych prawidłowych produktów z obrazami.'}), 400
+
+        status_data = {
+            'status': 'pending', 'total_products': len(products),
+            'processed_products': 0, 'products': products, 'errors': []
+        }
+        with open(os.path.join(session_folder, 'status.json'), 'w') as f: json.dump(status_data, f)
+
+        return jsonify({'session_id': session_id, 'product_count': len(products)})
+    except Exception as e:
+        if os.path.exists(session_folder): shutil.rmtree(session_folder)
+        print(f"Błąd w manual_start_processing: {e}")
+        return jsonify({'error': f'Błąd inicjowania sesji ręcznej: {e}'}), 500
 
 def run_generation_thread(session_id, resolution, aspect_ratio, styles):
     session_folder = os.path.join(TEMP_FOLDER, session_id)
     status_path = os.path.join(session_folder, 'status.json')
 
-    # Zmieniamy 'processed_images' na 'processed_products'
     def update_status(status=None, processed_increment=0, error_details=None):
         with open(status_path, 'r+') as f:
             data = json.load(f)
@@ -362,73 +371,65 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
 
     try:
         update_status(status='processing')
-        feed_folder = os.path.join(session_folder, 'feed')
+        feed_folder = os.path.join(session_folder, 'feed') # Upewniamy się, że istnieje
         output_folder = os.path.join(session_folder, 'output')
         os.makedirs(feed_folder, exist_ok=True); os.makedirs(output_folder, exist_ok=True)
 
         with open(status_path, 'r') as f: status_data = json.load(f)
         for product in status_data['products']:
             product_name = product['name']
-            image_urls = product['image_urls']
+            
+            # === ADAPTACJA DLA DWÓCH TRYBÓW ===
+            reference_image_paths = []
+            # Tryb Ręczny: ścieżki już istnieją
+            if 'image_paths' in product and product['image_paths']:
+                reference_image_paths = product['image_paths']
+            # Tryb XML: pobieramy obrazy z URL
+            elif 'image_urls' in product and product['image_urls']:
+                for url in product['image_urls']:
+                    img_path = download_image_from_url(url, feed_folder)
+                    if img_path:
+                        reference_image_paths.append(img_path)
+                    else:
+                        update_status(error_details={'product_name': product_name, 'source_url': url, 'message': 'Nie udało się pobrać obrazu.', 'step': 'download'})
 
-            downloaded_images_paths = []
-            for url in image_urls:
-                img_path = download_image_from_url(url, feed_folder)
-                if img_path:
-                    downloaded_images_paths.append(img_path)
-                else:
-                    update_status(error_details={
-                            'source_url': url,
-                            'product_name': product_name,
-                            'message': 'Nie udało się pobrać obrazu z podanego URL.',
-                            'step': 'download'
-                    })
-        
-            if not downloaded_images_paths:
-                update_status(error_details={
-                    'product_name': product_name,
-                    'message': 'Brak obrazów referencyjnych dla produktu po próbie pobrania.',
-                    'step': 'ai_processing'
-                })
-                # Inkrementujemy licznik, aby pasek postępu szedł do przodu
+            if not reference_image_paths:
+                update_status(error_details={'product_name': product_name, 'message': 'Brak obrazów referencyjnych dla produktu.', 'step': 'ai_processing'})
                 update_status(processed_increment=1)
                 continue
+
             try:
                 pil_images = []
-                for img_path in downloaded_images_paths:
+                for img_path in reference_image_paths:
                     with Image.open(img_path) as img:
                         img.thumbnail((1024, 1024))
                         pil_images.append(img.convert('RGB'))
 
-                safe_product_name = re.sub(r'[^\w\-_\.]', '', product_name)
+                if not pil_images:
+                    raise Exception("Nie udało się załadować żadnych obrazów PIL.")
 
+                safe_product_name = re.sub(r'[^\w\-_\.]', '', product_name)
                 final_prompts = analyze_product_for_two_prompts_xml(pil_images, product_name, styles)
 
-                print(f"⏳ Czekam 10 sekund po analizie tekstu...")
+                print(f"⏳ Czekam 10 sekund po analizie tekstu dla '{product_name}'...")
                 time.sleep(10)
 
                 for i, prompt in enumerate(final_prompts):
-                    # Przekazujemy listę obrazów PIL jako obrazy referencyjne
                     generated_image, filename = generate_gemini_image_sync(prompt, i, safe_product_name, pil_images, resolution, aspect_ratio)
                     if generated_image and filename:
                         generated_image.save(os.path.join(output_folder, filename))
-
-                    print(f"⏳ Czekam 15 sekund po wygenerowaniu obrazu...")
+                    
+                    print(f"⏳ Czekam 15 sekund po wygenerowaniu obrazu dla '{product_name}'...")
                     time.sleep(15)
 
                 update_status(processed_increment=1)
             except Exception as e:
-                update_status(error_details={
-                    'product_name': product_name,
-                    'message': str(e),
-                    'step': 'ai_processing'
-                })
-                # Również inkrementujemy, aby kontynuować
-                update_status(processed_increment=1)
+                update_status(error_details={'product_name': product_name, 'message': str(e), 'step': 'ai_processing'})
+                update_status(processed_increment=1) # Kontynuuj nawet po błędzie
 
         update_status(status='complete')
     except Exception as e:
-            update_status(status='failed', error_details={'message': str(e), 'step': 'general'})
+        update_status(status='failed', error_details={'message': str(e), 'step': 'general'})
 
 @app.route('/api/xml/generate', methods=['POST'])
 def xml_generate_creations():
