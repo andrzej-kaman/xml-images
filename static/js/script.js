@@ -1,308 +1,247 @@
-// ==================== GLOBAL STATE ====================
+// ==================== GLOBAL STATE & CONSTANTS ====================
 let currentMode = 'xml';
+let activeSessionId = null;
+let pollInterval = null;
+let productCardCounter = 0;
+// New robust way to handle files for manual upload
+let manualProductsData = new Map();
 
-// State for workflows
-let xmlState = { sessionId: null, status: 'idle', pollInterval: null };
-let manualState = { sessionId: null, status: 'idle', pollInterval: null, productCounter: 0, products: [] };
-
-// ==================== INIT ====================
+// ==================== DOMContentLoaded - INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', () => {
-    // Initialize the view with the default mode
+    // --- THEME TOGGLE LOGIC ---
+    const themeToggleButton = document.getElementById('theme-toggle-btn');
+    const body = document.body;
+    const themeIcon = themeToggleButton.querySelector('i');
+    const applyTheme = (theme) => {
+        body.classList.toggle('dark-mode', theme === 'dark');
+        themeIcon.classList.toggle('fa-moon', theme === 'light');
+        themeIcon.classList.toggle('fa-sun', theme === 'dark');
+    };
+    themeToggleButton.addEventListener('click', () => {
+        const newTheme = body.classList.contains('dark-mode') ? 'light' : 'dark';
+        localStorage.setItem('theme', newTheme);
+        applyTheme(newTheme);
+    });
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    applyTheme(savedTheme);
+
+    // --- APP LOGIC ---
+    document.getElementById('tab-xml').addEventListener('click', () => switchMode('xml'));
+    document.getElementById('tab-upload').addEventListener('click', () => switchMode('upload'));
+    document.getElementById('startXmlBtn').addEventListener('click', handleXmlUpload);
+    document.getElementById('xmlGenerateBtn').addEventListener('click', handleXmlGeneration);
+    document.getElementById('addProductBtn').addEventListener('click', addProductCard);
+    document.getElementById('manualSubmitBtn').addEventListener('click', showManualSettings);
+    document.getElementById('manualGenerateBtn').addEventListener('click', handleManualGeneration);
+
     switchMode('xml');
+    addProductCard(); // Start with one card
 });
 
-// ==================== MODE SWITCHING ====================
+// ==================== UI & VIEW MANAGEMENT ====================
 function switchMode(mode) {
     currentMode = mode;
     document.getElementById('tab-xml').classList.toggle('active', mode === 'xml');
     document.getElementById('tab-upload').classList.toggle('active', mode === 'upload');
     document.getElementById('mode-xml').style.display = mode === 'xml' ? 'block' : 'none';
     document.getElementById('mode-upload').style.display = mode === 'upload' ? 'block' : 'none';
+    showView(mode === 'xml' ? 'xml-step-upload' : 'manual-step-products');
     hideError();
-
-    if (mode === 'upload' && manualState.products.length === 0) {
-        addProductCard(); // Use the new function
-    }
 }
 
-// ==================== SHARED HELPER FUNCTIONS ====================
-function startPolling(mode) {
-    const state = mode === 'xml' ? xmlState : manualState;
-    if (state.pollInterval) clearInterval(state.pollInterval);
-    state.pollInterval = setInterval(() => pollForStatus(mode), 2500);
+function showView(viewId) {
+    document.querySelectorAll('.app-step').forEach(step => step.style.display = 'none');
+    document.getElementById(viewId).style.display = 'block';
 }
 
-async function pollForStatus(mode) {
-    const state = mode === 'xml' ? xmlState : manualState;
-    if (!state.sessionId) return;
+function showError(message) {
+    const el = document.getElementById('errorMessage');
+    el.innerHTML = `<strong>Błąd:</strong> ${message}`;
+    el.style.display = 'block';
+}
 
+function hideError() {
+    document.getElementById('errorMessage').style.display = 'none';
+}
+
+// ==================== POLLING & STATUS UPDATE (Shared) ====================
+// ... (This section remains unchanged from the previous correct version)
+function startPolling(sessionId) {
+    activeSessionId = sessionId;
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(pollForStatus, 3000);
+    showView('progress-step');
+}
+async function pollForStatus() {
+    if (!activeSessionId) return;
     try {
-        const response = await fetch(`/api/xml/status/${state.sessionId}`);
+        const response = await fetch(`/api/xml/status/${activeSessionId}`);
         const data = await response.json();
-
-        if (!response.ok) {
-            throw new Error(data.error || `Błąd serwera: ${response.status}`);
-        }
-
-        const prefix = mode === 'xml' ? 'xml' : 'manual';
-        const progress = data.total_products > 0 ? (data.processed_products / data.total_products) * 100 : 0;
-        document.getElementById(`${prefix}ProgressFill`).style.width = `${progress.toFixed(0)}%`;
-        document.getElementById(`${prefix}StatusMessage`).textContent = `Przetworzono ${data.processed_products} z ${data.total_products}`;
-
+        if (!response.ok) throw new Error(data.error || `Błąd serwera: ${response.status}`);
+        updateProgress(data.processed_products, data.total_products);
         if (data.status === 'complete' || data.status === 'failed') {
-            clearInterval(state.pollInterval);
-            state.status = 'complete';
-            displayResults(mode, data);
+            clearInterval(pollInterval);
+            pollInterval = null;
+            displayResults(data);
         }
     } catch (err) {
         showError(`Błąd odpytywania o status: ${err.message}.`);
-        clearInterval(state.pollInterval);
+        clearInterval(pollInterval);
+        pollInterval = null;
+        switchMode(currentMode);
     }
 }
-
-function displayResults(mode, data) {
-    const prefix = mode === 'xml' ? 'xml' : 'manual';
-    showStep(mode, 'results');
-
-    const downloadSection = document.getElementById(`${prefix}DownloadSection`);
-    const errorsSection = document.getElementById(`${prefix}ErrorsSection`);
-    const errorsList = document.getElementById(`${prefix}ErrorsList`);
-
+function updateProgress(processed, total) {
+    const progress = total > 0 ? (processed / total) * 100 : 0;
+    document.getElementById('progressFill').style.width = `${progress.toFixed(0)}%`;
+    document.getElementById('statusMessage').textContent = `Przetworzono ${processed} z ${total} produktów...`;
+}
+function displayResults(data) {
+    showView('results-step');
+    const downloadSection = document.getElementById('downloadSection');
+    const errorsSection = document.getElementById('errorsSection');
+    const errorsList = document.getElementById('errorsList');
     downloadSection.innerHTML = '';
     errorsList.innerHTML = '';
     errorsSection.style.display = 'none';
-
     if (data.download_url) {
         const downloadLink = document.createElement('a');
         downloadLink.href = data.download_url;
-        downloadLink.className = 'btn neo-button download';
-        downloadLink.innerHTML = '<span class="btn-icon">📦</span><span class="btn-text">Pobierz ZIP</span>';
-        downloadLink.addEventListener('click', handleDownloadClick);
+        downloadLink.className = 'btn btn-primary';
+        downloadLink.innerHTML = '<i class="fa-solid fa-download"></i> Pobierz Wyniki (.zip)';
         downloadSection.appendChild(downloadLink);
     } else {
-        downloadSection.innerHTML = '<p class="error-text">Nie wygenerowano plików do pobrania. Sprawdź listę błędów.</p>';
+        downloadSection.innerHTML = '<p>Nie wygenerowano żadnych plików. Sprawdź logi błędów.</p>';
     }
-
     if (data.errors && data.errors.length > 0) {
         errorsSection.style.display = 'block';
         data.errors.forEach(error => {
             const li = document.createElement('li');
-            const source = error.product_name ? `produkt <strong>${error.product_name}</strong>` : (error.source_url ? `URL <strong>${error.source_url}</strong>` : 'przetwarzanie ogólne');
-            li.innerHTML = `Błąd na etapie '${error.step}' dla ${source}: <em>${error.message}</em>`;
+            li.textContent = `Produkt: ${error.product_name || 'N/A'} - ${error.message}`;
             errorsList.appendChild(li);
         });
     }
 }
 
-function showStep(mode, step) {
-    const steps = mode === 'xml' ? ['upload', 'settings', 'styles', 'progress', 'results'] : ['products', 'settings', 'progress', 'results'];
-    const prefix = mode === 'xml' ? 'xml' : 'manual';
-    steps.forEach(s => {
-        document.getElementById(`${prefix}-step-${s}`).style.display = 'none';
-    });
-    document.getElementById(`${prefix}-step-${step}`).style.display = 'block';
-}
-
-async function handleDownloadClick(event) {
-    event.preventDefault();
-    const link = event.currentTarget;
-    try {
-        const response = await fetch(link.href);
-        if (!response.ok) throw new Error((await response.json()).error || 'Pobieranie nie powiodło się');
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
-        a.download = link.href.split('/').pop();
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        link.outerHTML = '<p class="success-text">✅ Plik pobrany! Dane sesji zostały usunięte.</p>';
-    } catch (err) {
-        showError(err.message);
-    }
-}
-
 // ==================== XML WORKFLOW ====================
-
-function toggleXmlSource() {
-    const source = document.querySelector('input[name="xmlSource"]:checked').value;
-    document.getElementById('xml-source-file').style.display = source === 'file' ? 'block' : 'none';
-    document.getElementById('xml-source-url').style.display = source === 'url' ? 'block' : 'none';
-}
-
+// ... (This section remains unchanged from the previous correct version)
 async function handleXmlUpload() {
     hideError();
-    const source = document.querySelector('input[name="xmlSource"]:checked').value;
+    const fileInput = document.getElementById('xmlFileInput');
+    const urlInput = document.getElementById('xmlUrlInput');
     let body, headers = {};
-
-    if (source === 'file') {
-        const file = document.getElementById('xmlFileInput').files[0];
-        if (!file) return showError('Proszę wybrać plik XML.');
+    if (fileInput.files.length > 0) {
         const formData = new FormData();
-        formData.append('xml_file', file);
+        formData.append('xml_file', fileInput.files[0]);
         body = formData;
-    } else {
-        const url = document.getElementById('xmlUrlInput').value.trim();
-        if (!url) return showError('Proszę wkleić link do pliku XML.');
-        body = JSON.stringify({ xml_url: url });
+    } else if (urlInput.value.trim() !== '') {
+        body = JSON.stringify({ xml_url: urlInput.value.trim() });
         headers['Content-Type'] = 'application/json';
+    } else {
+        return showError('Proszę wybrać plik XML lub podać link URL.');
     }
-
     try {
         const response = await fetch('/api/xml/start', { method: 'POST', body, headers });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Nieznany błąd serwera.');
-
-        xmlState.sessionId = data.session_id;
-        document.getElementById('settings-image-count').textContent = data.image_count;
-        showStep('xml', 'settings');
+        activeSessionId = data.session_id;
+        document.getElementById('settings-product-count').textContent = data.product_count;
+        showView('xml-step-settings');
     } catch (err) { showError(err.message); }
 }
-
-function handleSettingsSubmit() {
-    showStep('xml', 'styles');
-}
-
-async function handleStylesSubmit() {
+async function handleXmlGeneration() {
     const style1 = document.getElementById('xmlStyle1').value.trim();
     const style2 = document.getElementById('xmlStyle2').value.trim();
     if (!style1 || !style2) return showError('Proszę wpisać oba style.');
-
     const payload = {
-        session_id: xmlState.sessionId,
+        session_id: activeSessionId,
         resolution: document.getElementById('xmlResolution').value,
         aspect_ratio: document.getElementById('xmlAspectRatio').value,
         styles: [style1, style2]
     };
-
-    try {
-        const response = await fetch('/api/xml/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        if (!response.ok) throw new Error((await response.json()).error || 'Błąd rozpoczęcia generowania.');
-        showStep('xml', 'progress');
-        startPolling('xml');
-    } catch (err) {
-        showError(err.message);
-        showStep('xml', 'styles');
-    }
+    await generateCreations(payload);
 }
 
-// ==================== MANUAL UPLOAD MODE (NEW) ====================
-
+// ==================== REWRITTEN MANUAL WORKFLOW ====================
 function addProductCard() {
-    if (manualState.products.length >= 10) {
-        showError("Osiągnięto maksymalną liczbę 10 produktów.");
-        return;
-    }
-
-    const id = ++manualState.productCounter;
-    const productData = { id, name: '', files: [] };
-    manualState.products.push(productData);
+    const container = document.getElementById('productsContainer');
+    if (manualProductsData.size >= 10) return showError("Można dodać maksymalnie 10 produktów.");
 
     const template = document.getElementById('productCardTemplate');
+    if (!template) return showError("Błąd krytyczny: Nie znaleziono szablonu produktu!");
+
     const card = template.content.cloneNode(true).firstElementChild;
-    card.dataset.id = id;
+    const cardId = `product_${++productCardCounter}`;
+    card.dataset.id = cardId;
+    manualProductsData.set(cardId, { name: '', files: [] });
 
-    card.querySelector('.product-number').textContent = manualState.products.length;
-    
-    // --- Event Listeners ---
-    const removeBtn = card.querySelector('.btn-remove-product');
-    removeBtn.addEventListener('click', () => removeProductCard(id));
-
-    const nameInput = card.querySelector('.product-name-input');
-    nameInput.addEventListener('input', (e) => {
-        const product = manualState.products.find(p => p.id === id);
-        if(product) product.name = e.target.value;
+    card.querySelector('.product-number').textContent = manualProductsData.size;
+    card.querySelector('.product-name-input').addEventListener('input', (e) => {
+        manualProductsData.get(cardId).name = e.target.value;
+    });
+    card.querySelector('.btn-remove-product').addEventListener('click', () => {
+        manualProductsData.delete(cardId);
+        card.remove();
+        // Re-number remaining cards
+        document.querySelectorAll('#productsContainer .product-card').forEach((c, index) => {
+            c.querySelector('.product-number').textContent = index + 1;
+        });
     });
 
     const dropZone = card.querySelector('.drop-zone');
     const fileInput = card.querySelector('.drop-zone-input');
-
     dropZone.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', (e) => {
-        handleFiles(id, e.target.files);
-        fileInput.value = ''; // Reset for re-uploading same file
-    });
-
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-        });
-    });
-
-    ['dragenter', 'dragover'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-over'));
-    });
-
-    ['dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-over'));
-    });
-
+    fileInput.addEventListener('change', (e) => handleFiles(cardId, e.target.files));
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); });
     dropZone.addEventListener('drop', (e) => {
-        handleFiles(id, e.dataTransfer.files);
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        handleFiles(cardId, e.dataTransfer.files);
     });
 
-    document.getElementById('productsContainer').appendChild(card);
+    container.appendChild(card);
 }
 
-function removeProductCard(id) {
-    manualState.products = manualState.products.filter(p => p.id !== id);
-    document.querySelector(`.product-card[data-id='${id}']`).remove();
+function handleFiles(cardId, newFiles) {
+    const productData = manualProductsData.get(cardId);
+    if (!productData) return;
 
-    // Re-number the remaining cards
-    document.querySelectorAll('.product-card').forEach((card, index) => {
-        card.querySelector('.product-number').textContent = index + 1;
-    });
-}
-
-function handleFiles(productId, files) {
-    const product = manualState.products.find(p => p.id === productId);
-    if (!product) return;
-
-    const newFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
-    const totalFiles = product.files.length + newFiles.length;
-
-    if (totalFiles > 4) {
+    const filesToAdd = Array.from(newFiles).filter(file => file.type.startsWith('image/'));
+    if (productData.files.length + filesToAdd.length > 4) {
         showError("Można dodać maksymalnie 4 zdjęcia na produkt.");
-        // Trim the excess files if user selects too many at once
-        const needed = 4 - product.files.length;
-        if (needed > 0) {
-            product.files.push(...newFiles.slice(0, needed));
-        }
-    } else {
-        product.files.push(...newFiles);
+        return;
     }
-    
-    updatePreviews(productId);
+
+    productData.files.push(...filesToAdd);
+    renderPreviews(cardId);
 }
 
-function updatePreviews(productId) {
-    const product = manualState.products.find(p => p.id === productId);
-    if (!product) return;
+function renderPreviews(cardId) {
+    const productData = manualProductsData.get(cardId);
+    const card = document.querySelector(`.product-card[data-id="${cardId}"]`);
+    if (!productData || !card) return;
 
-    const card = document.querySelector(`.product-card[data-id='${productId}']`);
     const previewContainer = card.querySelector('.image-previews');
     previewContainer.innerHTML = '';
 
-    product.files.forEach((file, index) => {
+    productData.files.forEach((file, index) => {
         const reader = new FileReader();
         reader.onload = (e) => {
             const div = document.createElement('div');
             div.className = 'preview-image-container';
-            div.innerHTML = `
-                <img src="${e.target.result}" class="preview-image" alt="${file.name}">
-                <button class="remove-image-btn" data-index="${index}">×</button>
-            `;
-            div.querySelector('.remove-image-btn').addEventListener('click', () => {
-                product.files.splice(index, 1);
-                updatePreviews(productId);
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'remove-image-btn';
+            removeBtn.textContent = '×';
+            removeBtn.addEventListener('click', () => {
+                productData.files.splice(index, 1);
+                renderPreviews(cardId);
             });
+            const img = document.createElement('img');
+            img.className = 'preview-image';
+            img.src = e.target.result;
+            div.appendChild(img);
+            div.appendChild(removeBtn);
             previewContainer.appendChild(div);
         };
         reader.readAsDataURL(file);
@@ -311,77 +250,59 @@ function updatePreviews(productId) {
 
 function showManualSettings() {
     hideError();
-    if (manualState.products.length === 0) {
-        return showError('Proszę dodać przynajmniej jeden produkt.');
-    }
+    if (manualProductsData.size === 0) return showError('Proszę dodać przynajmniej jeden produkt.');
     let allOk = true;
-    for (const [index, product] of manualState.products.entries()) {
-        const card = document.querySelector(`.product-card[data-id='${product.id}']`);
-        card.classList.remove('has-error');
-
-        if (product.files.length === 0) {
-            card.classList.add('has-error');
-            showError(`Produkt #${index + 1} nie ma żadnych zdjęć.`);
-            allOk = false;
-        }
-    }
-    if (allOk) {
-        showStep('upload', 'settings');
-    }
+    manualProductsData.forEach(prod => {
+        if (prod.files.length === 0) allOk = false;
+    });
+    if (!allOk) return showError('Każdy dodany produkt musi mieć co najmniej jedno zdjęcie.');
+    showView('manual-step-settings');
 }
 
-async function handleManualSubmit() {
+async function handleManualGeneration() {
     hideError();
-    const style1 = document.getElementById('manualStyle1').value.trim();
-    const style2 = document.getElementById('manualStyle2').value.trim();
-    if (!style1 || !style2) return showError('Proszę wpisać oba style.');
-
     const formData = new FormData();
-
-    manualState.products.forEach((product, pIndex) => {
-        // The backend doesn't use the name, but we have it in `product.name` if needed.
-        product.files.forEach((file, fIndex) => {
-            formData.append(`product_${pIndex}_file_${fIndex}`, file);
+    let productIndex = 0;
+    for (const [cardId, productData] of manualProductsData.entries()) {
+        const name = productData.name || `Produkt ${productIndex + 1}`;
+        formData.append(`product_${productIndex}_name`, name);
+        productData.files.forEach((file, fileIndex) => {
+            formData.append(`product_${productIndex}_file_${fileIndex}`, file);
         });
-    });
+        productIndex++;
+    }
 
     try {
         const response = await fetch('/api/manual/start', { method: 'POST', body: formData });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Błąd serwera przy tworzeniu sesji.');
+        if (!response.ok) throw new Error(data.error || 'Błąd serwera przy trybie ręcznym.');
         
-        manualState.sessionId = data.session_id;
+        const style1 = document.getElementById('manualStyle1').value.trim();
+        const style2 = document.getElementById('manualStyle2').value.trim();
+        if (!style1 || !style2) return showError('Proszę wpisać oba style.');
         
-        const generatePayload = {
-            session_id: manualState.sessionId,
+        const payload = {
+            session_id: data.session_id,
             resolution: document.getElementById('manualResolution').value,
             aspect_ratio: document.getElementById('manualAspectRatio').value,
             styles: [style1, style2]
         };
+        await generateCreations(payload);
+    } catch (err) { showError(err.message); }
+}
 
-        const generateResponse = await fetch('/api/xml/generate', {
+// ==================== SHARED GENERATION CALL ====================
+async function generateCreations(payload) {
+    try {
+        const response = await fetch('/api/xml/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(generatePayload)
+            body: JSON.stringify(payload)
         });
-        if (!generateResponse.ok) throw new Error((await generateResponse.json()).error || 'Błąd rozpoczęcia generowania.');
-
-        showStep('upload', 'progress');
-        startPolling('upload');
-
+        if (!response.ok) throw new Error((await response.json()).error || 'Błąd rozpoczęcia generowania.');
+        startPolling(payload.session_id);
     } catch (err) {
         showError(err.message);
-        showStep('upload', 'settings');
+        switchMode(currentMode);
     }
-}
-
-// ==================== UI HELPERS ====================
-function showError(message) {
-    const el = document.getElementById('errorMessage');
-    el.innerHTML = `<strong>❌ Błąd:</strong> ${message}`;
-    el.style.display = 'block';
-}
-
-function hideError() {
-    document.getElementById('errorMessage').style.display = 'none';
 }
