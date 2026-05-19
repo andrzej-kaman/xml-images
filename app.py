@@ -26,12 +26,12 @@ app = Flask(__name__)
 client = genai.Client(
     vertexai=True,
     project="eco-league-496710-c0",
-    location="global" # location="us-central1"
+    location="us-central1"
 )
 
 # Modele AI
 TEXT_ANALYSIS_MODEL = "gemini-2.5-flash"
-IMAGE_GENERATION_MODEL = "gemini-3.1-flash-image-preview" # Nano Banana
+IMAGE_GENERATION_MODEL = "gemini-3-pro-image" # IMAGE_GENERATION_MODEL = "gemini-3.1-flash-image-preview" # Nano Banana
 
 # Foldery tymczasowe
 TEMP_FOLDER = 'temp_files'
