@@ -18,7 +18,11 @@ app = Flask(__name__)
 # ============== KONFIGURACJA ==============
 
 # Automatycznie pobiera klucz z os.environ["GEMINI_API_KEY"]
-client = genai.Client()
+client = genai.Client(
+    vertexai=True,
+    project="eco-league-496710-c0", # np. "kaman-marketing-ai-123"
+    location="us-central1"             # lokalizacja serwerów, us-central1 ma najszybciej nowości
+)
 
 # Modele AI
 TEXT_ANALYSIS_MODEL = "gemini-2.5-flash"
