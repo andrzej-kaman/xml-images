@@ -367,9 +367,9 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                 # Również inkrementujemy, aby kontynuować
                 update_status(processed_increment=1)
 
-        update_status(status='complete')
-        except Exception as e:
-        update_status(status='failed', error_details={'message': str(e), 'step': 'general'})
+            update_status(status='complete')
+    except Exception as e:
+            update_status(status='failed', error_details={'message': str(e), 'step': 'general'})
 
 @app.route('/api/xml/generate', methods=['POST'])
 def xml_generate_creations():
