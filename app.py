@@ -75,7 +75,10 @@ def parse_xml_for_image_urls(xml_path):
                  urls.append(elem.text.strip())
             elif elem.get('url') and elem.get('url').strip().startswith('http'):
                  urls.append(elem.get('url').strip())
-        return list(set(urls))
+
+        # Usuń duplikaty z zachowaniem kolejności i zwróć tylko 10 pierwszych produktów.
+        unique_urls = list(dict.fromkeys(urls))
+        return unique_urls[:10]
     except Exception as e:
         print(f"❌ Błąd parsowania XML: {e}")
         return []
@@ -130,21 +133,35 @@ Nie dodawaj żadnych wstępów. Zwróć tylko 2 linijki tekstu, każda z nich to
         raise Exception(f"Błąd analizy Gemini dla '{product_name}': {e}")
 
 
-def generate_gemini_image_sync(prompt, index, product_name, reference_image):
+def generate_gemini_image_sync(prompt, index, product_name, reference_image, resolution=None, aspect_ratio=None):
     """
-    Wywołanie modelu Nano Banana do WYGENEROWANIA obrazu.
+    Wywołanie modelu Nano Banana do WYGENEROWANIA obrazu przy użyciu oficjalnego obiektu ImageConfig.
     """
     safe_product_name = re.sub(r'[^\w\-_\.]', '', product_name)
     filename = f"{safe_product_name}_creative_{index}_{int(time.time())}.jpeg"
+    
+    # 1. Przygotowujemy dedykowany słownik z parametrami obrazu
+    img_params = {}
+    if aspect_ratio:
+        img_params['aspect_ratio'] = aspect_ratio
+    if resolution:
+        img_params['image_size'] = resolution
+
+    # 2. Tworzymy główną konfigurację
+    gen_config = types.GenerateContentConfig(
+        response_modalities=["IMAGE"],
+        safety_settings=GLOBAL_SAFETY_SETTINGS
+    )
+    
+    # 3. Jeśli użytkownik podał parametry z frontendu, dołączamy oficjalny obiekt ImageConfig
+    if img_params:
+        gen_config.image_config = types.ImageConfig(**img_params)
     
     try:
         response = client.models.generate_content(
             model=IMAGE_GENERATION_MODEL,
             contents=[prompt, reference_image],
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"],
-                safety_settings=GLOBAL_SAFETY_SETTINGS # Wyłączenie filtrów w generowaniu obrazu
-            )
+            config=gen_config # Czysty i zgodny ze specyfikacją Pydantic obiekt konfiguracyjny
         )
         
         img_bytes = None
@@ -245,9 +262,9 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                     # 1. Krok: Gemini odczytuje obrazek, łączy go ze stylami użytkownika i tworzy gotowe prompty
                     final_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name, styles)
 
-                    # 2. Krok: Nano Banana tworzy obrazki na podstawie połączonego promptu ORAZ oryginalnego zdjęcia
+                    # 2. Krok: Nano Banana tworzy obrazki przekazując do Pydantic odpowiednie wymiary
                     for i, prompt in enumerate(final_prompts):
-                        generated_image, filename = generate_gemini_image_sync(prompt, i, product_name, pil_img)
+                        generated_image, filename = generate_gemini_image_sync(prompt, i, product_name, pil_img, resolution, aspect_ratio)
                         if generated_image and filename:
                             generated_image.save(os.path.join(output_folder, filename))
                             
