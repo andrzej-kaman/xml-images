@@ -82,7 +82,34 @@
 
                     <div id="manual-step-settings" class="app-step" style="display:none;">
                         <h3>Krok 2: Ustawienia i Style</h3>
-                        <!-- Formularze ustawień i stylów dla trybu ręcznego -->
+                        <p>Wybierz globalne ustawienia, które zostaną zastosowane do wszystkich dodanych produktów.</p>
+                        <div class="settings-grid">
+                            <div class="input-group">
+                                <label for="manualResolution">Rozdzielczość</label>
+                                <select id="manualResolution" class="form-input">
+                                    <option value="1K">1K (~1024px)</option>
+                                    <option value="2K">2K (~2048px)</option>
+                                    <option value="4K">4K (~4096px)</option>
+                                </select>
+                            </div>
+                            <div class="input-group">
+                                <label for="manualAspectRatio">Proporcje</label>
+                                <select id="manualAspectRatio" class="form-input">
+                                    <option value="1:1">1:1 (Kwadrat)</option>
+                                    <option value="16:9">16:9 (Poziom)</option>
+                                    <option value="9:16">9:16 (Pion)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="manualStyle1">Styl 1 (np. "Clean studio lighting, on a white pedestal")</label>
+                            <input type="text" id="manualStyle1" class="form-input" placeholder="Wpisz pierwszy styl...">
+                        </div>
+                        <div class="input-group">
+                            <label for="manualStyle2">Styl 2 (np. "In a real-life setting, on a wooden table")</label>
+                            <input type="text" id="manualStyle2" class="form-input" placeholder="Wpisz drugi styl...">
+                        </div>
+                        <button id="manualGenerateBtn" class="btn btn-primary">Generuj Kreacje</button>
                     </div>
                 </div>
 
