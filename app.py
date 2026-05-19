@@ -347,8 +347,8 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
 
                 final_prompts = analyze_product_for_two_prompts_xml(pil_images, product_name, styles)
 
-                print(f"⏳ Czekam 10 sekund po analizie tekstu...")
-                time.sleep(10)
+                print(f"⏳ Czekam 12 sekund po analizie tekstu...")
+                time.sleep(12)
 
                 for i, prompt in enumerate(final_prompts):
                     # Przekazujemy listę obrazów PIL jako obrazy referencyjne
@@ -356,8 +356,8 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                     if generated_image and filename:
                         generated_image.save(os.path.join(output_folder, filename))
 
-                    print(f"⏳ Czekam 15 sekund po wygenerowaniu obrazu...")
-                    time.sleep(15)
+                    print(f"⏳ Czekam 18 sekund po wygenerowaniu obrazu...")
+                    time.sleep(18)
 
                 update_status(processed_increment=1)
             except Exception as e:
