@@ -318,12 +318,12 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                 if img_path:
                     downloaded_images_paths.append(img_path)
                 else:
-                update_status(error_details={
-                        'source_url': url,
-                        'product_name': product_name,
-                        'message': 'Nie udało się pobrać obrazu z podanego URL.',
-                        'step': 'download'
-                })
+                    update_status(error_details={
+                            'source_url': url,
+                            'product_name': product_name,
+                            'message': 'Nie udało się pobrać obrazu z podanego URL.',
+                            'step': 'download'
+                    })
         
             if not downloaded_images_paths:
                 update_status(error_details={
