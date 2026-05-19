@@ -283,7 +283,7 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                     img.thumbnail((1024, 1024))
                     pil_img = img.convert('RGB')
                     
-                                        final_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name, styles)
+                    final_prompts = analyze_product_for_two_prompts_xml([pil_img], product_name, styles)
 
                     # Dodajemy krótką przerwę po analizie tekstu, aby rozłożyć zapytania do AI
                     print(f"⏳ Czekam 3 sekundy po analizie tekstu (ochrona przed błędem 429)...")
@@ -299,10 +299,6 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                         time.sleep(5)
                             
                 update_status(processed_increment=1)
-                
-                # Ochrona przed limitem 429 RESOURCE_EXHAUSTED w Vertex AI
-                # print(f"⏳ Czekam 5 sekund przed przetworzeniem kolejnego produktu z XML...")
-                # time.sleep(5)
                 
             except Exception as e:
                 update_status(error_details={
