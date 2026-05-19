@@ -135,25 +135,82 @@
                 </div>
             </div>
 
-            <!-- ─── MODE: UPLOAD (CUSTOM) ───────────────────────────── -->
+            <!-- ─── MODE: UPLOAD (MANUAL) ───────────────────────────── -->
             <div id="mode-upload" style="display:none;">
-                <div class="instructions">
-                    <h3>📋 Jak to działa?</h3>
-                    <ol>
-                        <li>Dodaj od 1 do 4 zdjęć osoby oraz wpisz jej zawód/opis.</li>
-                        <li>Kliknij <strong>+ Dodaj kolejną osobę</strong>, aby dodać następny zestaw.</li>
-                        <li>Kliknij „Generuj Kreacje” – AI wygeneruje profesjonalzne zdjęcia.</li>
-                    </ol>
+                <div id="manual-step-products">
+                    <div class="instructions">
+                        <h3>Krok 1: Dodaj produkty ręcznie</h3>
+                        <p>Użyj tej opcji, jeśli zamiast pliku XML wolisz ręcznie dodać produkty. Możesz dodać maksymalnie 10 produktów, każdy z maksymalnie 4 zdjęciami.</p>
+                    </div>
+                    <div id="productsContainer">
+                        <!-- Pola dla produktów będą dodawane dynamicznie tutaj -->
+                    </div>
+                    <button class="btn-add-person neo-button-add" onclick="addProductBlock()">
+                        <span>＋</span> Dodaj kolejny produkt
+                    </button>
+                    <hr class="separator">
+                    <button class="btn neo-button" onclick="showManualSettings()">
+                        <span class="btn-icon">▶️</span>
+                        <span class="btn-text">Dalej</span>
+                    </button>
                 </div>
-                <div id="personsContainer"></div>
-                <button class="btn-add-person neo-button-add" onclick="addPersonSet()">
-                    <span>＋</span> Dodaj kolejną osobę
-                </button>
-                <hr class="separator">
-                <button class="btn neo-button" onclick="processUploadMode()">
-                    <span class="btn-icon">🚀</span>
-                    <span class="btn-text">Generuj Kreacje (Custom)</span>
-                </button>
+
+                <div id="manual-step-settings" style="display:none;">
+                    <h3>Krok 2: Ustawienia Obrazów</h3>
+                    <p>Wybierz globalne ustawienia, które zostaną zastosowane do wszystkich dodanych produktów.</p>
+                    <div class="settings-grid">
+                        <div class="input-group">
+                            <label class="input-label" for="manualResolution">Rozdzielczość</label>
+                            <select id="manualResolution" class="input-field neo-input">
+                                <option value="1K">1K (~1024px)</option>
+                                <option value="2K">2K (~2048px)</option>
+                                <option value="4K">4K (~4096px)</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label" for="manualAspectRatio">Proporcje</label>
+                            <select id="manualAspectRatio" class="input-field neo-input">
+                                <option value="1:1">1:1 (Kwadrat)</option>
+                                <option value="16:9">16:9 (Poziom)</option>
+                                <option value="9:16">9:16 (Pion)</option>
+                                <option value="4:5">4:5 (Instagram)</option>
+                                <option value="3:2">3:2 (Fotografia)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label" for="manualStyle1">Styl 1 (np. "Clean studio lighting, on a white pedestal")</label>
+                        <input type="text" id="manualStyle1" class="input-field neo-input" placeholder="Wpisz pierwszy styl...">
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label" for="manualStyle2">Styl 2 (np. "In a real-life setting, on a wooden table, morning light")</label>
+                        <input type="text" id="manualStyle2" class="input-field neo-input" placeholder="Wpisz drugi styl...">
+                    </div>
+                    <button id="manualGenerateBtn" class="btn neo-button" onclick="handleManualSubmit()">
+                        <span class="btn-icon">🚀</span>
+                        <span class="btn-text">Generuj Kreacje</span>
+                    </button>
+                </div>
+
+                <!-- Postęp i wyniki będą używać tych samych kontenerów co tryb XML -->
+                <!-- Krok 3: Postęp -->
+                <div id="manual-step-progress" style="display:none;">
+                    <h3>Przetwarzanie...</h3>
+                    <div class="progress-container">
+                        <div class="progress-bar neo-progress"><div class="progress-fill" id="manualProgressFill"></div></div>
+                        <div class="status-message" id="manualStatusMessage"></div>
+                    </div>
+                </div>
+
+                <!-- Krok 4: Wyniki -->
+                <div id="manual-step-results" style="display:none;">
+                    <h3>Gotowe!</h3>
+                    <div id="manualDownloadSection"></div>
+                    <div id="manualErrorsSection" style="display:none; margin-top: 20px;">
+                        <h4 class="alert-error-title">Wystąpiły problemy podczas przetwarzania niektórych plików:</h4>
+                        <ul id="manualErrorsList" class="errors-list"></ul>
+                    </div>
+                </div>
             </div>
 
             <!-- ─── SHARED: Error message ────────────────────────────── -->

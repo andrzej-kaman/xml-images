@@ -1,19 +1,13 @@
 // ==================== GLOBAL STATE ====================
-let currentMode = 'xml'; // 'xml' | 'upload'
+let currentMode = 'xml';
 
-// State for the XML multi-step workflow
-let xmlState = {
-    sessionId: null, imageUrls: [], totalImages: 0, totalProducts: 0,
-    settings: { resolution: '1K', aspect_ratio: '1:1', styles: ['', ''] },
-    status: 'idle', progress: 0, pollInterval: null
-};
-
-// State for the custom upload mode
-let personSets = [];
-let personCounter = 0;
+// State for workflows
+let xmlState = { sessionId: null, status: 'idle', pollInterval: null };
+let manualState = { sessionId: null, status: 'idle', pollInterval: null, productCounter: 0, products: [] };
 
 // ==================== INIT ====================
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize the view with the default mode
     switchMode('xml');
 });
 
@@ -25,149 +19,59 @@ function switchMode(mode) {
     document.getElementById('mode-xml').style.display = mode === 'xml' ? 'block' : 'none';
     document.getElementById('mode-upload').style.display = mode === 'upload' ? 'block' : 'none';
     hideError();
-    if (mode === 'upload' && personSets.length === 0) {
-        addPersonSet();
+
+    if (mode === 'upload' && manualState.products.length === 0) {
+        addProductBlock(); // Add the first product block automatically
     }
 }
 
-// ==================== XML WORKFLOW ====================
-
-function toggleXmlSource() {
-    const source = document.querySelector('input[name="xmlSource"]:checked').value;
-    if (source === 'file') {
-        document.getElementById('xml-source-file').style.display = 'block';
-        document.getElementById('xml-source-url').style.display = 'none';
-    } else {
-        document.getElementById('xml-source-file').style.display = 'none';
-        document.getElementById('xml-source-url').style.display = 'block';
-    }
+// ==================== SHARED HELPER FUNCTIONS ====================
+function startPolling(mode) {
+    const state = mode === 'xml' ? xmlState : manualState;
+    if (state.pollInterval) clearInterval(state.pollInterval);
+    state.pollInterval = setInterval(() => pollForStatus(mode), 2500);
 }
 
-function showXmlStep(step) {
-    ['upload', 'settings', 'styles', 'progress', 'results'].forEach(s => {
-        const el = document.getElementById(`xml-step-${s}`);
-        if (el) el.style.display = 'none';
-    });
-    const currentStepEl = document.getElementById(`xml-step-${step}`);
-    if (currentStepEl) currentStepEl.style.display = 'block';
-}
-
-async function handleXmlUpload() {
-    hideError();
-    const source = document.querySelector('input[name="xmlSource"]:checked').value;
-    let formData = new FormData();
-    let body;
-    let headers = {};
-
-    if (source === 'file') {
-        const fileInput = document.getElementById('xmlFileInput');
-        const file = fileInput.files[0];
-        if (!file) { return showError('Proszę wybrać plik XML.'); }
-        formData.append('xml_file', file);
-        body = formData;
-    } else { // source === 'url'
-        const urlInput = document.getElementById('xmlUrlInput');
-        const url = urlInput.value.trim();
-        if (!url) { return showError('Proszę wkleić link do pliku XML.'); }
-        body = JSON.stringify({ xml_url: url });
-        headers['Content-Type'] = 'application/json';
-    }
+async function pollForStatus(mode) {
+    const state = mode === 'xml' ? xmlState : manualState;
+    if (!state.sessionId) return;
 
     try {
-        const response = await fetch('/api/xml/start', { 
-            method: 'POST', 
-            body: body,
-            headers: headers
-        });
+        const response = await fetch(`/api/xml/status/${state.sessionId}`);
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Nieznany błąd serwera.');
 
-        xmlState.sessionId = data.session_id;
-        xmlState.totalImages = data.image_count;
-        xmlState.totalProducts = data.product_count;
-        xmlState.status = 'settings';
-        document.getElementById('settings-image-count').textContent = data.image_count;
-        showXmlStep('settings');
-    } catch (err) { showError(err.message); }
-}
-
-function handleSettingsSubmit() {
-    xmlState.settings.resolution = document.getElementById('xmlResolution').value;
-    xmlState.settings.aspect_ratio = document.getElementById('xmlAspectRatio').value;
-    xmlState.status = 'styles';
-    showXmlStep('styles');
-}
-
-async function handleStylesSubmit() {
-    const style1 = document.getElementById('xmlStyle1').value.trim();
-    const style2 = document.getElementById('xmlStyle2').value.trim();
-    if (!style1 || !style2) { return showError('Proszę wpisać oba style.'); }
-
-    xmlState.settings.styles = [style1, style2];
-    xmlState.status = 'processing';
-    showXmlStep('progress');
-
-    try {
-        const response = await fetch('/api/xml/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...xmlState.settings, session_id: xmlState.sessionId })
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Błąd rozpoczęcia generowania.');
-        xmlState.pollInterval = setInterval(pollForStatus, 2500);
-    } catch (err) { 
-        showError(err.message); 
-        showXmlStep('styles'); // Go back to styles step on error
-    }
-}
-
-async function pollForStatus() {
-    if (!xmlState.sessionId) return;
-
-    try {
-        const response = await fetch(`/api/xml/status/${xmlState.sessionId}`);
         if (!response.ok) {
-            // Spróbuj odczytać błąd JSON, nawet jeśli status nie jest 200 OK
-            try {
-                const errorData = await response.json();
-                throw new Error(errorData.error || `Błąd serwera: ${response.status}`);
-            } catch (jsonError) {
-                throw new Error(`Błąd serwera: ${response.status}`);
-            }
+            throw new Error(data.error || `Błąd serwera: ${response.status}`);
         }
 
-        const data = await response.json();
-
+        const prefix = mode === 'xml' ? 'xml' : 'manual';
         const progress = data.total_products > 0 ? (data.processed_products / data.total_products) * 100 : 0;
-        const progressBar = document.getElementById('xmlProgressFill');
-        const statusMessage = document.getElementById('xmlStatusMessage');
-        if(progressBar) progressBar.style.width = `${progress.toFixed(0)}%`;
-        if(statusMessage) statusMessage.textContent = `Przetworzono ${data.processed_products} z ${data.total_products}`;
+        document.getElementById(`${prefix}ProgressFill`).style.width = `${progress.toFixed(0)}%`;
+        document.getElementById(`${prefix}StatusMessage`).textContent = `Przetworzono ${data.processed_products} z ${data.total_products}`;
 
         if (data.status === 'complete' || data.status === 'failed') {
-            clearInterval(xmlState.pollInterval);
-            xmlState.status = 'complete';
-            displayResults(data);
+            clearInterval(state.pollInterval);
+            state.status = 'complete';
+            displayResults(mode, data);
         }
     } catch (err) {
-        showError(`Błąd odpytywania o status: ${err.message}. Spróbuj odświeżyć stronę.`);
-        clearInterval(xmlState.pollInterval);
+        showError(`Błąd odpytywania o status: ${err.message}.`);
+        clearInterval(state.pollInterval);
     }
 }
 
-function displayResults(data) {
-    showXmlStep('results');
-    const downloadSection = document.getElementById('xmlDownloadSection');
-    const errorsSection = document.getElementById('xmlErrorsSection');
-    const errorsList = document.getElementById('xmlErrorsList');
+function displayResults(mode, data) {
+    const prefix = mode === 'xml' ? 'xml' : 'manual';
+    showStep(mode, 'results');
 
-    // Wyczyść poprzednie wyniki
+    const downloadSection = document.getElementById(`${prefix}DownloadSection`);
+    const errorsSection = document.getElementById(`${prefix}ErrorsSection`);
+    const errorsList = document.getElementById(`${prefix}ErrorsList`);
+
     downloadSection.innerHTML = '';
     errorsList.innerHTML = '';
     errorsSection.style.display = 'none';
 
-    // 1. Wyświetl link do pobrania, jeśli istnieje
     if (data.download_url) {
         const downloadLink = document.createElement('a');
         downloadLink.href = data.download_url;
@@ -179,152 +83,240 @@ function displayResults(data) {
         downloadSection.innerHTML = '<p class="error-text">Nie wygenerowano plików do pobrania. Sprawdź listę błędów.</p>';
     }
 
-    // 2. Wyświetl szczegółowe błędy, jeśli wystąpiły
     if (data.errors && data.errors.length > 0) {
         errorsSection.style.display = 'block';
         data.errors.forEach(error => {
             const li = document.createElement('li');
-            const source = error.file ? `plik <strong>${error.file}</strong>` : (error.source_url ? `URL <strong>${error.source_url}</strong>` : 'przetwarzanie ogólne');
+            const source = error.product_name ? `produkt <strong>${error.product_name}</strong>` : (error.source_url ? `URL <strong>${error.source_url}</strong>` : 'przetwarzanie ogólne');
             li.innerHTML = `Błąd na etapie '${error.step}' dla ${source}: <em>${error.message}</em>`;
             errorsList.appendChild(li);
         });
     }
 }
 
+function showStep(mode, step) {
+    const steps = mode === 'xml' ? ['upload', 'settings', 'styles', 'progress', 'results'] : ['products', 'settings', 'progress', 'results'];
+    const prefix = mode === 'xml' ? 'xml' : 'manual';
+    steps.forEach(s => {
+        document.getElementById(`${prefix}-step-${s}`).style.display = 'none';
+    });
+    document.getElementById(`${prefix}-step-${step}`).style.display = 'block';
+}
+
 async function handleDownloadClick(event) {
     event.preventDefault();
     const link = event.currentTarget;
-    const url = link.href;
-
-    link.classList.add('disabled');
-    link.querySelector('.btn-text').textContent = 'Pobieranie...';
-
     try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || `Nie udało się pobrać pliku. Status: ${response.status}`);
-        }
-
+        const response = await fetch(link.href);
+        if (!response.ok) throw new Error((await response.json()).error || 'Pobieranie nie powiodło się');
         const blob = await response.blob();
-        const tempUrl = window.URL.createObjectURL(blob);
-        const tempLink = document.createElement('a');
-
-        const filename = url.substring(url.lastIndexOf('/') + 1);
-        tempLink.href = tempUrl;
-        tempLink.setAttribute('download', filename);
-
-        document.body.appendChild(tempLink);
-        tempLink.click();
-        document.body.removeChild(tempLink);
-        window.URL.revokeObjectURL(tempUrl);
-
-        // Zaktualizuj interfejs po pomyślnym pobraniu
-        link.outerHTML = '<p class="success-text">✅ Plik pobrany! Dane sesji zostały usunięte z serwera.</p>';
-
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = link.href.split('/').pop();
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        link.outerHTML = '<p class="success-text">✅ Plik pobrany! Dane sesji zostały usunięte.</p>';
     } catch (err) {
         showError(err.message);
-        // Przywróć przycisk, jeśli pobieranie się nie powiodło
-        link.classList.remove('disabled');
-        link.querySelector('.btn-text').textContent = 'Pobierz ZIP';
     }
 }
 
-// ==================== CUSTOM UPLOAD MODE ====================
+// ==================== XML WORKFLOW ====================
 
-function addPersonSet() {
-    const id = ++personCounter;
-    personSets.push({ id, files: [null, null, null, null], description: '' });
-    renderPersonSets();
+function toggleXmlSource() {
+    const source = document.querySelector('input[name="xmlSource"]:checked').value;
+    document.getElementById('xml-source-file').style.display = source === 'file' ? 'block' : 'none';
+    document.getElementById('xml-source-url').style.display = source === 'url' ? 'block' : 'none';
 }
 
-function removePersonSet(id) {
-    if (personSets.length === 1) return;
-    personSets = personSets.filter(p => p.id !== id);
-    renderPersonSets();
+async function handleXmlUpload() {
+    hideError();
+    const source = document.querySelector('input[name="xmlSource"]:checked').value;
+    let body, headers = {};
+
+    if (source === 'file') {
+        const file = document.getElementById('xmlFileInput').files[0];
+        if (!file) return showError('Proszę wybrać plik XML.');
+        const formData = new FormData();
+        formData.append('xml_file', file);
+        body = formData;
+    } else {
+        const url = document.getElementById('xmlUrlInput').value.trim();
+        if (!url) return showError('Proszę wkleić link do pliku XML.');
+        body = JSON.stringify({ xml_url: url });
+        headers['Content-Type'] = 'application/json';
+    }
+
+    try {
+        const response = await fetch('/api/xml/start', { method: 'POST', body, headers });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Nieznany błąd serwera.');
+
+        xmlState.sessionId = data.session_id;
+        document.getElementById('settings-image-count').textContent = data.image_count;
+        showStep('xml', 'settings');
+    } catch (err) { showError(err.message); }
 }
 
-function renderPersonSets() {
-    const container = document.getElementById('personsContainer');
-    if (!container) return;
-    container.innerHTML = '';
-    personSets.forEach((person, idx) => {
-        const set = document.createElement('div');
-        set.className = 'person-set';
-        set.innerHTML = `
-            <div class="person-set-header"><div class="person-set-title"><span class="badge">${idx + 1}</span>Osoba ${idx + 1}</div>${personSets.length > 1 ? `<button class="btn-remove-person" onclick="removePersonSet(${person.id})" title="Usuń">✕</button>`: ''}</div>
-            <div class="photo-grid">${[0,1,2,3].map(slotIdx => buildSlotHTML(person.id, slotIdx, person.files[slotIdx])).join('')}</div>
-            <div class="description-group"><label class="description-label">💼 Zawód / opis</label><textarea class="neo-textarea" rows="2" placeholder="Podaj zawód lub krótki opis osoby..." id="desc-${person.id}" oninput="updateDescription(${person.id}, this.value)">${person.description}</textarea></div>
-        `;
-        container.appendChild(set);
-        [0,1,2,3].forEach(slotIdx => {
-            const slot = document.getElementById(`slot-${person.id}-${slotIdx}`);
-            slot.addEventListener('dragover', e => { e.preventDefault(); slot.classList.add('drag-over'); });
-            slot.addEventListener('dragleave', () => slot.classList.remove('drag-over'));
-            slot.addEventListener('drop', e => {
-                e.preventDefault();
-                slot.classList.remove('drag-over');
-                const file = e.dataTransfer.files[0];
-                if (file && file.type.startsWith('image/')) handleFileSelect(person.id, slotIdx, file);
-            });
-            slot.querySelector('input[type="file"]').addEventListener('change', (e) => handleFileSelect(person.id, slotIdx, e.target.files[0]));
+function handleSettingsSubmit() {
+    showStep('xml', 'styles');
+}
+
+async function handleStylesSubmit() {
+    const style1 = document.getElementById('xmlStyle1').value.trim();
+    const style2 = document.getElementById('xmlStyle2').value.trim();
+    if (!style1 || !style2) return showError('Proszę wpisać oba style.');
+
+    const payload = {
+        session_id: xmlState.sessionId,
+        resolution: document.getElementById('xmlResolution').value,
+        aspect_ratio: document.getElementById('xmlAspectRatio').value,
+        styles: [style1, style2]
+    };
+
+    try {
+        const response = await fetch('/api/xml/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
+        if (!response.ok) throw new Error((await response.json()).error || 'Błąd rozpoczęcia generowania.');
+        showStep('xml', 'progress');
+        startPolling('xml');
+    } catch (err) {
+        showError(err.message);
+        showStep('xml', 'styles');
+    }
+}
+
+// ==================== MANUAL UPLOAD MODE ====================
+
+function addProductBlock() {
+    if (manualState.products.length >= 10) {
+        showError("Osiągnięto maksymalną liczbę 10 produktów.");
+        return;
+    }
+    const id = ++manualState.productCounter;
+    manualState.products.push({ id, name: '', files: [] });
+
+    const container = document.getElementById('productsContainer');
+    const block = document.createElement('div');
+    block.className = 'product-block';
+    block.id = `product-block-${id}`;
+    block.innerHTML = `
+        <div class="product-block-header">
+            <span class="badge">${manualState.products.length}</span>
+            <input type="text" class="input-field neo-input product-name-input" placeholder="Wpisz nazwę produktu..." oninput="updateProductName(${id}, this.value)">
+            <button class="btn-remove-person" onclick="removeProductBlock(${id})" title="Usuń">✕</button>
+        </div>
+        <div class="file-upload-area">
+            <input type="file" id="file-input-${id}" multiple accept="image/*" onchange="handleFileChange(${id}, this)" style="display:none;">
+            <label for="file-input-${id}" class="file-upload-label">
+                <span>📷 Kliknij, aby dodać od 1 do 4 zdjęć</span>
+            </label>
+        </div>
+        <div class="image-preview-grid" id="preview-grid-${id}"></div>
+    `;
+    container.appendChild(block);
+}
+
+function removeProductBlock(id) {
+    manualState.products = manualState.products.filter(p => p.id !== id);
+    document.getElementById(`product-block-${id}`).remove();
+    // Re-render badges to fix numbering
+    const badges = document.querySelectorAll('#productsContainer .badge');
+    badges.forEach((badge, index) => {
+        badge.textContent = index + 1;
     });
 }
 
-function buildSlotHTML(personId, slotIdx, file) {
-    const hasImage = file !== null;
-    return `
-        <div class="photo-slot ${hasImage ? 'has-image' : ''}" id="slot-${personId}-${slotIdx}">
-            <input type="file" id="file-${personId}-${slotIdx}" accept="image/*" style="display:none">
-            ${hasImage ? `<img src="${file._dataUrl}" alt="Zdjęcie">` : '<div class="slot-empty"><span>📷</span></div>'}
-            <div class="photo-slot-label">Zdjęcie ${slotIdx + 1}</div>
-        </div>
-    `;
+function updateProductName(id, name) {
+    const product = manualState.products.find(p => p.id === id);
+    if (product) product.name = name;
 }
 
-function handleFileSelect(personId, slotIdx, file) {
-    if (!file || !file.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        const person = personSets.find(p => p.id === personId);
-        if (!person) return;
-        file._dataUrl = e.target.result;
-        person.files[slotIdx] = file;
-        renderPersonSets(); // Re-render for simplicity
-    };
-    reader.readAsDataURL(file);
+function handleFileChange(id, input) {
+    const product = manualState.products.find(p => p.id === id);
+    if (!product) return;
+
+    product.files = Array.from(input.files).slice(0, 4); // Limit to 4 files
+
+    const previewGrid = document.getElementById(`preview-grid-${id}`);
+    previewGrid.innerHTML = '';
+    product.files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = e => {
+            const img = document.createElement('img');
+            img.src = e.target.result;
+            img.className = 'image-preview';
+            previewGrid.appendChild(img);
+        };
+        reader.readAsDataURL(file);
+    });
 }
 
-function updateDescription(personId, value) {
-    const person = personSets.find(p => p.id === personId);
-    if (person) person.description = value;
-}
-
-async function processUploadMode() {
-    if (!personSets.every(p => p.files.some(f=>f) && p.description)) {
-        return showError('Każda osoba musi mieć co najmniej jedno zdjęcie i opis.');
-    }
+function showManualSettings() {
     hideError();
+    if (manualState.products.length === 0) {
+        return showError('Proszę dodać przynajmniej jeden produkt.');
+    }
+    for (const product of manualState.products) {
+        if (!product.name.trim()) {
+            return showError(`Produkt #${product.id} nie ma nazwy.`);
+        }
+        if (product.files.length === 0) {
+            return showError(`Produkt "${product.name}" nie ma żadnych zdjęć.`);
+        }
+    }
+    showStep('upload', 'settings');
+}
+
+async function handleManualSubmit() {
+    hideError();
+    const style1 = document.getElementById('manualStyle1').value.trim();
+    const style2 = document.getElementById('manualStyle2').value.trim();
+    if (!style1 || !style2) return showError('Proszę wpisać oba style.');
 
     const formData = new FormData();
-    formData.append('persons_count', personSets.length);
-    personSets.forEach((person, idx) => {
-        formData.append(`description_${idx}`, person.description.trim());
-        person.files.forEach((file, slotIdx) => {
-            if (file) formData.append(`image_${idx}_${slotIdx}`, file, file.name);
+    formData.append('resolution', document.getElementById('manualResolution').value);
+    formData.append('aspect_ratio', document.getElementById('manualAspectRatio').value);
+    formData.append('styles', JSON.stringify([style1, style2]));
+
+    manualState.products.forEach((product, pIndex) => {
+        formData.append(`product_${pIndex}_name`, product.name);
+        product.files.forEach((file, fIndex) => {
+            formData.append(`product_${pIndex}_file_${fIndex}`, file);
         });
     });
 
-    // In the new version, we should use the same polling mechanism as the XML workflow
-    // For now, it's just a simple fetch
     try {
-        const response = await fetch('/api/process-upload', { method: 'POST', body: formData });
+        const response = await fetch('/api/manual/start', { method: 'POST', body: formData });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Błąd serwera');
-        alert('Przetwarzanie w trybie custom zakończone! (Logika wyników do implementacji)');
+        
+        manualState.sessionId = data.session_id;
+        
+        // The next call to generate is the same as the XML one, so we can reuse it.
+        const generateResponse = await fetch('/api/xml/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                session_id: manualState.sessionId,
+                resolution: document.getElementById('manualResolution').value,
+                aspect_ratio: document.getElementById('manualAspectRatio').value,
+                styles: [style1, style2]
+             })
+        });
+        if (!generateResponse.ok) throw new Error((await generateResponse.json()).error || 'Błąd rozpoczęcia generowania.');
+
+        showStep('upload', 'progress');
+        startPolling('upload');
     } catch (err) {
         showError(err.message);
+        showStep('upload', 'settings');
     }
 }
 
@@ -339,4 +331,3 @@ function showError(message) {
 function hideError() {
     document.getElementById('errorMessage').style.display = 'none';
 }
-
