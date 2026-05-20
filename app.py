@@ -27,7 +27,7 @@ app = Flask(__name__)
 client = genai.Client(
     vertexai=True,
     project="eco-league-496710-c0",
-    location="us-central1"
+    location="global"
 )
 
 # Modele AI
