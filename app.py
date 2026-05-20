@@ -6,6 +6,7 @@ import io
 import time
 import json
 import threading
+import queue
 import zipfile
 from PIL import Image
 import re
@@ -26,12 +27,13 @@ app = Flask(__name__)
 client = genai.Client(
     vertexai=True,
     project="eco-league-496710-c0",
-    location="global" # location="us-central1"
+    location="us-central1"
 )
 
 # Modele AI
-TEXT_ANALYSIS_MODEL = "gemini-2.5-flash" # TEXT_ANALYSIS_MODEL = "gemini-2.5-pro" -> do dokładniejszej analizy 
-IMAGE_GENERATION_MODEL = "gemini-3.1-flash-image-preview" # IMAGE_GENERATION_MODEL = "gemini-3-pro-image-preview" -> do zdjęć wysokiej jakości
+TEXT_ANALYSIS_MODEL = "gemini-2.5-flash"
+IMAGE_GENERATION_MODEL = "gemini-2.5-pro" # Nano Banana
+
 # Foldery tymczasowe
 TEMP_FOLDER = 'temp_files'
 os.makedirs(TEMP_FOLDER, exist_ok=True)
@@ -163,7 +165,7 @@ def analyze_product_for_two_prompts_xml(images_pil, product_name, styles=None):
         style_2 = styles[1] if len(styles) > 1 else style_1
         
         analysis_prompt = f"""Jesteś ekspertem od fotografii produktowej.
-Przeanalizuj załączone zdjęcie produktu. Następnie stwórz 2 precyzyjne prompty w języku angielskim dla generatora obrazów. Jeżeli na produkcie są napisy masz je również przekazywać, bez literówk, bez błędów, w języku jak na produkcie, ma to być wskazówka by nie renderować byków w słowah na produktach.
+Przeanalizuj załączone zdjęcie produktu. Następnie stwórz 2 precyzyjne prompty w języku angielskim dla generatora obrazów.
 
 ZASADA: Najpierw dokładnie opisz fizyczny wygląd produktu ze zdjęcia (materiał, kształt, kolory, widoczne etykiety), a następnie umieść ten produkt DOKŁADNIE w takim otoczeniu/stylu:
 - Prompt 1 ma mieć otoczenie: "{style_1}"
@@ -352,11 +354,13 @@ def manual_start_processing():
         print(f"Błąd w manual_start_processing: {e}")
         return jsonify({'error': f'Błąd inicjowania sesji ręcznej: {e}'}), 500
 
-def run_generation_thread(session_id, resolution, aspect_ratio, styles):
+def run_generation_for_session(session_id, resolution, aspect_ratio, styles):
+    """Ta funkcja zawiera logikę, która była wcześniej w `run_generation_thread`."""
     session_folder = os.path.join(TEMP_FOLDER, session_id)
     status_path = os.path.join(session_folder, 'status.json')
 
     def update_status(status=None, processed_increment=0, error_details=None):
+        # Ta funkcja pozostaje bez zmian
         with open(status_path, 'r+') as f:
             data = json.load(f)
             if status: data['status'] = status
@@ -366,7 +370,7 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
 
     try:
         update_status(status='processing')
-        feed_folder = os.path.join(session_folder, 'feed') # Upewniamy się, że istnieje
+        feed_folder = os.path.join(session_folder, 'feed')
         output_folder = os.path.join(session_folder, 'output')
         os.makedirs(feed_folder, exist_ok=True); os.makedirs(output_folder, exist_ok=True)
 
@@ -374,12 +378,9 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
         for product in status_data['products']:
             product_name = product['name']
             
-            # === ADAPTACJA DLA DWÓCH TRYBÓW ===
             reference_image_paths = []
-            # Tryb Ręczny: ścieżki już istnieją
             if 'image_paths' in product and product['image_paths']:
                 reference_image_paths = product['image_paths']
-            # Tryb XML: pobieramy obrazy z URL
             elif 'image_urls' in product and product['image_urls']:
                 for url in product['image_urls']:
                     img_path = download_image_from_url(url, feed_folder)
@@ -420,11 +421,32 @@ def run_generation_thread(session_id, resolution, aspect_ratio, styles):
                 update_status(processed_increment=1)
             except Exception as e:
                 update_status(error_details={'product_name': product_name, 'message': str(e), 'step': 'ai_processing'})
-                update_status(processed_increment=1) # Kontynuuj nawet po błędzie
+                update_status(processed_increment=1)
 
         update_status(status='complete')
     except Exception as e:
         update_status(status='failed', error_details={'message': str(e), 'step': 'general'})
+
+# ============== KOLEJKA ZADAŃ I WORKER =============
+job_queue = queue.Queue()
+NUM_WORKERS = 2 # Możesz dostosować tę liczbę
+
+def generation_worker():
+    """Pracownik (worker) pobierający zadania z kolejki w pętli."""
+    while True:
+        try:
+            session_id, resolution, aspect_ratio, styles = job_queue.get(block=True)
+            
+            print(f"WORKER: Rozpoczynam przetwarzanie sesji {session_id}")
+            run_generation_for_session(session_id, resolution, aspect_ratio, styles)
+            
+            job_queue.task_done()
+            print(f"WORKER: Zakończono przetwarzanie sesji {session_id}")
+
+        except Exception as e:
+            print(f"❌ KRYTYCZNY BŁĄD WORKERA (sesja: {session_id if 'session_id' in locals() else 'nieznana'}): {e}")
+            if 'session_id' in locals():
+                 job_queue.task_done() # Oznaczamy, żeby nie blokować, ale z logiem błędu
 
 @app.route('/api/xml/generate', methods=['POST'])
 def xml_generate_creations():
@@ -433,11 +455,11 @@ def xml_generate_creations():
     if not session_id or not os.path.exists(os.path.join(TEMP_FOLDER, session_id)):
         return jsonify({'error': 'Nieprawidłowe ID sesji'}), 404
 
-    args = (session_id, data.get('resolution'), data.get('aspect_ratio'), data.get('styles'))
-    thread = threading.Thread(target=run_generation_thread, args=args)
-    thread.start()
+    # Dodaj zadanie do kolejki zamiast tworzyć wątek
+    job_details = (session_id, data.get('resolution'), data.get('aspect_ratio'), data.get('styles'))
+    job_queue.put(job_details)
 
-    return jsonify({'status': 'Przetwarzanie rozpoczęte w tle', 'session_id': session_id})
+    return jsonify({'status': 'Zadanie zostało dodane do kolejki', 'session_id': session_id})
 
 @app.route('/api/xml/status/<session_id>', methods=['GET'])
 def get_xml_status(session_id):
@@ -458,6 +480,7 @@ def get_xml_status(session_id):
             data['download_url'] = f'/api/download/{zip_filename}'
             with open(status_path, 'w') as f: json.dump(data, f)
 
+    data['queue_size'] = job_queue.qsize()
     return jsonify(data)
 
 @app.route('/api/download/<filename>')
@@ -466,31 +489,16 @@ def download_zip(filename):
     if not os.path.exists(filepath):
         return jsonify({'error': 'Plik nie istnieje lub został już usunięty'}), 404
 
-    match = re.search(r'kreacje_(session_\d+)\.zip', filename)
-    if not match:
-        @after_this_request
-        def cleanup_zip(response):
-            try:
-                os.remove(filepath)
-            except OSError as e:
-                print(f"Błąd podczas usuwania pliku zip {filepath}: {e}")
-        return response
-    return send_file(filepath, as_attachment=True)
-
-    session_id = match.group(1)
-    session_folder = os.path.join(TEMP_FOLDER, session_id)
-
+    # Upraszaczamy logikę czyszczenia - teraz jest to zadanie dla `cleanup_old_sessions`
+    # Ale nadal chcemy usunąć plik zip po pobraniu, żeby nie zajmował miejsca
     @after_this_request
-    def cleanup_session_data(response):
+    def cleanup_zip(response):
         try:
-            if os.path.exists(session_folder):
-                shutil.rmtree(session_folder)
-                print(f"✅ Usunięto folder sesji: {session_folder}")
             if os.path.exists(filepath):
                 os.remove(filepath)
-                print(f"✅ Usunięto plik ZIP: {filepath}")
+                print(f"🗑️ Usunięto plik ZIP po pobraniu: {filepath}")
         except Exception as e:
-            print(f"❌ Wystąpił błąd podczas czyszczenia plików dla sesji {session_id}: {e}")
+            print(f"❌ Błąd podczas usuwania pliku ZIP po pobraniu {filepath}: {e}")
         return response
 
     return send_file(filepath, as_attachment=True)
@@ -498,12 +506,15 @@ def download_zip(filename):
 if __name__ == '__main__':
     # Konfiguracja i uruchomienie harmonogramu czyszczenia
     scheduler = BackgroundScheduler()
-    # Uruchamiaj zadanie co 45 minut
     scheduler.add_job(func=cleanup_old_sessions, trigger="interval", minutes=45)
     scheduler.start()
-
-    # Zapewnienie, że harmonogram zostanie poprawnie zamknięty przy wyjściu z aplikacji
     atexit.register(lambda: scheduler.shutdown())
+
+    # Uruchomienie workerów w tle
+    for i in range(NUM_WORKERS):
+        worker_thread = threading.Thread(target=generation_worker, daemon=True)
+        worker_thread.start()
+        print(f"✅ Uruchomiono workera {i+1}/{NUM_WORKERS}")
 
     port = int(os.environ.get('PORT', 8003))
     app.run(host='0.0.0.0', port=port, debug=False)

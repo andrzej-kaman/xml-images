@@ -78,7 +78,7 @@ async function pollForStatus() {
         const response = await fetch(`/api/xml/status/${activeSessionId}`);
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || `Błąd serwera: ${response.status}`);
-        updateProgress(data.processed_products, data.total_products);
+        updateProgress(data.processed_products, data.total_products, data.queue_size);
         if (data.status === 'complete' || data.status === 'failed') {
             clearInterval(pollInterval);
             pollInterval = null;
@@ -91,10 +91,14 @@ async function pollForStatus() {
         switchMode(currentMode);
     }
 }
-function updateProgress(processed, total) {
+function updateProgress(processed, total, queueSize) {
     const progress = total > 0 ? (processed / total) * 100 : 0;
     document.getElementById('progressFill').style.width = `${progress.toFixed(0)}%`;
-    document.getElementById('statusMessage').textContent = `Przetworzono ${processed} z ${total} produktów...`;
+    let message = `Przetworzono ${processed} z ${total} produktów...`;
+    if (queueSize > 0) {
+        message += ` (Zadań w kolejce: ${queueSize})`;
+    }
+    document.getElementById('statusMessage').textContent = message;
 }
 function displayResults(data) {
     showView('results-step');
