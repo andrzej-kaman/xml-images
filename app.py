@@ -504,17 +504,23 @@ def download_zip(filename):
     return send_file(filepath, as_attachment=True)
 
 if __name__ == '__main__':
+    # ==================== TRYB LOKALNEGO DEWELOPMENTU ===================
+    # Ten blok jest używany tylko podczas uruchamiania `python app.py` lokalnie.
+    # Na serwerze produkcyjnym (Render), Gunicorn i gunicorn.conf.py zarządzają workerami.
+
+    print("--- URUCHAMIANIE W TRYBIE LOKALNEGO DEWELOPMENTU ---")
+
     # Konfiguracja i uruchomienie harmonogramu czyszczenia
     scheduler = BackgroundScheduler()
     scheduler.add_job(func=cleanup_old_sessions, trigger="interval", minutes=45)
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown())
 
-    # Uruchomienie workerów w tle
+    # Uruchomienie workerów w tle (dla dewelopmentu lokalnego)
     for i in range(NUM_WORKERS):
         worker_thread = threading.Thread(target=generation_worker, daemon=True)
         worker_thread.start()
-        print(f"✅ Uruchomiono workera {i+1}/{NUM_WORKERS}")
+        print(f"✅ Uruchomiono lokalnego workera {i+1}/{NUM_WORKERS}")
 
     port = int(os.environ.get('PORT', 8003))
     app.run(host='0.0.0.0', port=port, debug=False)
