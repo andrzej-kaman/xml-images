@@ -191,6 +191,7 @@ body {
     border-radius: 8px;
     font-size: 14px;
     background-color: var(--background-light-gray);
+    color: var(--text-dark);
     transition: border-color 0.2s ease;
 }
 
