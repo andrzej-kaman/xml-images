@@ -95,9 +95,16 @@ function updateProgress(processed, total, queueSize) {
     const progress = total > 0 ? (processed / total) * 100 : 0;
     document.getElementById('progressFill').style.width = `${progress.toFixed(0)}%`;
     let message = `Przetworzono ${processed} z ${total} produktów...`;
+
+    // Now, let's refine the message based on queueSize and processing status
     if (queueSize > 0) {
         message += ` (Zadań w kolejce: ${queueSize})`;
+    } else if (processed < total) { // Job is processing but not in queue
+        message += ` (Proces rozpoczęty)`;
     }
+    // If queueSize is 0 and processed === total, it means it's complete,
+    // and displayResults will handle the final message, so no extra message needed here.
+
     document.getElementById('statusMessage').textContent = message;
 }
 function displayResults(data) {
