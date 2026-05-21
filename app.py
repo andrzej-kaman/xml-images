@@ -7,6 +7,7 @@ import time
 import json
 import threading
 import queue
+import redis
 import zipfile
 from PIL import Image
 import re
@@ -27,14 +28,12 @@ app = Flask(__name__)
 client = genai.Client(
     vertexai=True,
     project="eco-league-496710-c0",
-    location="global"
+    location="us-central1"
 )
 
 # Modele AI
-TEXT_ANALYSIS_MODEL = "gemini-2.5-flash" 
-# TEXT_ANALYSIS_MODEL = "gemini-2.5-pro" -> do dokładniejszej analizy 
-IMAGE_GENERATION_MODEL = "gemini-3.1-flash-image-preview" 
-# IMAGE_GENERATION_MODEL = "gemini-3-pro-image-preview" -> do zdjęć wysokiej jakości
+TEXT_ANALYSIS_MODEL = "gemini-2.5-flash" # TEXT_ANALYSIS_MODEL = "gemini-2.5-pro" -> do dokładniejszej analizy 
+IMAGE_GENERATION_MODEL = "gemini-3.1-flash-image-preview" # IMAGE_GENERATION_MODEL = "gemini-3-pro-image-preview" -> do zdjęć wysokiej jakości
 
 # Foldery tymczasowe
 TEMP_FOLDER = 'temp_files'
@@ -429,26 +428,47 @@ def run_generation_for_session(session_id, resolution, aspect_ratio, styles):
     except Exception as e:
         update_status(status='failed', error_details={'message': str(e), 'step': 'general'})
 
-# ============== KOLEJKA ZADAŃ I WORKER =============
-job_queue = queue.Queue()
-NUM_WORKERS = 2 # Możesz dostosować tę liczbę
+# ============== KOLEJKA ZADAŃ I WORKER (REDIS) =============
+# Używamy Redis jako scentralizowanej kolejki, aby działało z Gunicorn
+# Upewnij się, że serwer Redis jest uruchomiony.
+# W pliku .env można ustawić REDIS_URL, np. REDIS_URL=redis://localhost:6379
+redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+redis_client = redis.from_url(redis_url, decode_responses=True)
+JOB_QUEUE_KEY = "generation_job_queue"
+NUM_WORKERS = 2 # Używane w gunicorn.conf.py oraz dla trybu deweloperskiego
 
 def generation_worker():
-    """Pracownik (worker) pobierający zadania z kolejki w pętli."""
+    """Pracownik (worker) pobierający zadania z kolejki Redis w pętli."""
+    print("WORKER: Wątek workera został uruchomiony i nasłuchuje na zadania w Redis.")
     while True:
         try:
-            session_id, resolution, aspect_ratio, styles = job_queue.get(block=True)
+            # blpop to blokujące wywołanie, które czeka na zadanie w liście Redis.
+            # Zwraca krotkę: (nazwa_klucza, wartosc_json)
+            _, job_json = redis_client.blpop(JOB_QUEUE_KEY)
             
+            job_details = json.loads(job_json)
+            session_id = job_details.get('session_id')
+            
+            if not session_id:
+                print("WORKER ERROR: Otrzymano zadanie bez session_id. Odrzucam.")
+                continue
+
             print(f"WORKER: Rozpoczynam przetwarzanie sesji {session_id}")
-            run_generation_for_session(session_id, resolution, aspect_ratio, styles)
-            
-            job_queue.task_done()
+            run_generation_for_session(
+                session_id, 
+                job_details.get('resolution'), 
+                job_details.get('aspect_ratio'), 
+                job_details.get('styles')
+            )
             print(f"WORKER: Zakończono przetwarzanie sesji {session_id}")
 
         except Exception as e:
-            print(f"❌ KRYTYCZNY BŁĄD WORKERA (sesja: {session_id if 'session_id' in locals() else 'nieznana'}): {e}")
-            if 'session_id' in locals():
-                 job_queue.task_done() # Oznaczamy, żeby nie blokować, ale z logiem błędu
+            # W przypadku błędu (np. błąd połączenia z Redis), logujemy i próbujemy dalej
+            # Zapobiega to zatrzymaniu workera
+            print(f"❌ KRYTYCZNY BŁĄD WORKERA: {e}")
+            # Można dodać krótką przerwę, aby uniknąć gorącej pętli w przypadku ciągłych błędów
+            time.sleep(5)
+
 
 @app.route('/api/xml/generate', methods=['POST'])
 def xml_generate_creations():
@@ -457,9 +477,16 @@ def xml_generate_creations():
     if not session_id or not os.path.exists(os.path.join(TEMP_FOLDER, session_id)):
         return jsonify({'error': 'Nieprawidłowe ID sesji'}), 404
 
-    # Dodaj zadanie do kolejki zamiast tworzyć wątek
-    job_details = (session_id, data.get('resolution'), data.get('aspect_ratio'), data.get('styles'))
-    job_queue.put(job_details)
+    # Tworzymy słownik z detalami zadania i serializujemy do JSON
+    job_details = {
+        'session_id': session_id,
+        'resolution': data.get('resolution'),
+        'aspect_ratio': data.get('aspect_ratio'),
+        'styles': data.get('styles')
+    }
+    
+    # Dodajemy zadanie do kolejki w Redis
+    redis_client.rpush(JOB_QUEUE_KEY, json.dumps(job_details))
 
     return jsonify({'status': 'Zadanie zostało dodane do kolejki', 'session_id': session_id})
 
@@ -482,7 +509,8 @@ def get_xml_status(session_id):
             data['download_url'] = f'/api/download/{zip_filename}'
             with open(status_path, 'w') as f: json.dump(data, f)
 
-    data['queue_size'] = job_queue.qsize()
+    # Pobieramy aktualny rozmiar kolejki z Redis
+    data['queue_size'] = redis_client.llen(JOB_QUEUE_KEY)
     return jsonify(data)
 
 @app.route('/api/download/<filename>')

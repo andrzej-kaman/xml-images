@@ -4,3 +4,4 @@ httpx
 Pillow
 gunicorn
 APScheduler
+redis
