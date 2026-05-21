@@ -147,8 +147,8 @@ def parse_xml_for_products_with_images(xml_path):
                     "image_urls": unique_urls[:4]
                 })
 
-        print(f"INFO: Znaleziono {len(products)} produktów. Zwracam maksymalnie 10.")
-        return products[:10]
+        print(f"INFO: Znaleziono {len(products)} produktów. Zwracam maksymalnie 30.")
+        return products[:30]
 
     except ET.ParseError as e:
         print(f"❌ Błąd parsowania XML: {e}")
