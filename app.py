@@ -32,8 +32,8 @@ client = genai.Client(
 )
 
 # Modele AI
-TEXT_ANALYSIS_MODEL = "gemini-2.5-flash" # TEXT_ANALYSIS_MODEL = "gemini-2.5-pro" -> do dokładniejszej analizy 
-IMAGE_GENERATION_MODEL = "gemini-2.5-flash-image" # IMAGE_GENERATION_MODEL = "gemini-3-pro-image-preview" -> do zdjęć wysokiej jakości
+TEXT_ANALYSIS_MODEL = "gemini-2.5-pro" # TEXT_ANALYSIS_MODEL = "gemini-2.5-pro" -> do dokładniejszej analizy 
+IMAGE_GENERATION_MODEL = "gemini-2.5-pro-image" # IMAGE_GENERATION_MODEL = "gemini-3-pro-image-preview" -> do zdjęć wysokiej jakości
 
 # Foldery tymczasowe
 TEMP_FOLDER = 'temp_files'
