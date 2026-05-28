@@ -1,12 +1,21 @@
 services:
   - type: web
-    name: generator-kreacji-xml
+    name: xml-images
     env: python
-    plan: free  # Możesz zmienić na płatny plan w panelu Render
+    plan: free
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn --workers 4 --bind 0.0.0.0:$PORT app:app"
+    startCommand: "gunicorn -c gunicorn.conf.py app:app"
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11  # Możesz dostosować do swojej wersji Pythona
+        value: 3.11
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: XML # <-- Upewnij się, że ta nazwa jest taka sama jak w usłudze Redis poniżej
       - key: GEMINI_API_KEY
-        fromSecret: true # Informuje Render, aby użyć klucza z panelu Secrets
+        fromSecret: true
+
+  - type: redis
+    name: XML # <-- Nadaj nazwę swojej usłudze Redis
+    plan: free
+    ipAllowList: [] # Opcjonalnie: ogranicz dostęp po IP
