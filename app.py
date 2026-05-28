@@ -27,7 +27,7 @@ app = Flask(__name__)
 # W chmurze (Render.com) ścieżkę do klucza podajesz w zmiennej GOOGLE_APPLICATION_CREDENTIALS
 client = genai.Client(
     vertexai=True,
-    project="eco-league-4967-c0",
+    project="eco-league-496710-c0",
     location="us-central1"
 )
 
