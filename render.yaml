@@ -9,13 +9,6 @@ services:
       - key: PYTHON_VERSION
         value: 3.11
       - key: REDIS_URL
-        fromService:
-          type: redis
-          name: XML # <-- Upewnij się, że ta nazwa jest taka sama jak w usłudze Redis poniżej
+        fromSecret: true
       - key: GEMINI_API_KEY
         fromSecret: true
-
-  - type: redis
-    name: XML # <-- Nadaj nazwę swojej usłudze Redis
-    plan: free
-    ipAllowList: [] # Opcjonalnie: ogranicz dostęp po IP
