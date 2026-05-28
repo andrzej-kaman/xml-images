@@ -27,12 +27,12 @@ app = Flask(__name__)
 # W chmurze (Render.com) ścieżkę do klucza podajesz w zmiennej GOOGLE_APPLICATION_CREDENTIALS
 client = genai.Client(
     vertexai=True,
-    project="eco-league-496710-c0",
+    project="eco-league-4967-c0",
     location="us-central1"
 )
 
 # Modele AI
-TEXT_ANALYSIS_MODEL = "gemini-2.5-pro" # TEXT_ANALYSIS_MODEL = "gemini-2.5-pro" -> do dokładniejszej analizy 
+TEXT_ANALYSIS_MODEL = "gemini-2.5-flash" # TEXT_ANALYSIS_MODEL = "gemini-2.5-pro" -> do dokładniejszej analizy 
 IMAGE_GENERATION_MODEL = "gemini-2.5-flash-image" # IMAGE_GENERATION_MODEL = "gemini-3-pro-image-preview" -> do zdjęć wysokiej jakości
 
 # Foldery tymczasowe
@@ -147,8 +147,8 @@ def parse_xml_for_products_with_images(xml_path):
                     "image_urls": unique_urls[:4]
                 })
 
-        print(f"INFO: Znaleziono {len(products)} produktów. Zwracam maksymalnie 30.")
-        return products[:30]
+        print(f"INFO: Znaleziono {len(products)} produktów. Zwracam maksymalnie 8.")
+        return products[:8]
 
     except ET.ParseError as e:
         print(f"❌ Błąd parsowania XML: {e}")
