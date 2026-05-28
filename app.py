@@ -88,7 +88,10 @@ def cleanup_old_sessions():
 
 def download_image_from_url(url, folder):
     try:
-        response = httpx.get(url, follow_redirects=True, timeout=15)
+                headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+        }
+        response = httpx.get(url, follow_redirects=True, timeout=15, headers=headers)
         response.raise_for_status()
         filename = os.path.basename(url.split('?')[0]) or f"image_{int(time.time())}.jpg"
         filepath = os.path.join(folder, filename)
