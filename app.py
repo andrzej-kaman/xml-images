@@ -88,14 +88,29 @@ def cleanup_old_sessions():
 
 def download_image_from_url(url, folder):
     try:
-        response = httpx.get(url, follow_redirects=True, timeout=15)
+        # Nagłówki udające prawdziwą przeglądarkę (Chrome na Windowsie)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://www.google.com/" # Czasami serwery sprawdzają skąd przyszedł ruch
+        }
+        
+        # Przekazujemy słownik headers do zapytania httpx
+        response = httpx.get(url, headers=headers, follow_redirects=True, timeout=15)
         response.raise_for_status()
+        
         filename = os.path.basename(url.split('?')[0]) or f"image_{int(time.time())}.jpg"
         filepath = os.path.join(folder, filename)
         with open(filepath, 'wb') as f:
             f.write(response.content)
+            
         print(f"✅ Pobrano obraz: {url} -> {filepath}")
         return filepath
+        
+    except httpx.HTTPStatusError as e:
+        print(f"❌ Błąd HTTP {e.response.status_code} podczas pobierania {url}")
+        return None
     except Exception as e:
         print(f"❌ Błąd podczas pobierania {url}: {e}")
         return None
