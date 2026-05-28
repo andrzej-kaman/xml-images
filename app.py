@@ -15,7 +15,6 @@ import httpx
 import xml.etree.ElementTree as ET
 import shutil
 from apscheduler.schedulers.background import BackgroundScheduler
-from google.api_core import exceptions
 from datetime import datetime, timedelta
 import pathlib
 import atexit
@@ -356,80 +355,78 @@ def manual_start_processing():
         print(f"Błąd w manual_start_processing: {e}")
         return jsonify({'error': f'Błąd inicjowania sesji ręcznej: {e}'}), 500
 
-def process_product_job(job_details):
-    session_id = job_details['session_id']
-    product_data = job_details['product_data']
-    resolution = job_details.get('resolution')
-    aspect_ratio = job_details.get('aspect_ratio')
-    styles = job_details.get('styles')
-
+def run_generation_for_session(session_id, resolution, aspect_ratio, styles):
+    """Ta funkcja zawiera logikę, która była wcześniej w `run_generation_thread`."""
     session_folder = os.path.join(TEMP_FOLDER, session_id)
     status_path = os.path.join(session_folder, 'status.json')
 
     def update_status(status=None, processed_increment=0, error_details=None):
+        # Ta funkcja pozostaje bez zmian
         with open(status_path, 'r+') as f:
             data = json.load(f)
             if status: data['status'] = status
             if processed_increment: data['processed_products'] += processed_increment
             if error_details: data['errors'].append(error_details)
-
-            # Check if all products in the session are processed
-            if data['processed_products'] == data['total_products']:
-                data['status'] = 'complete'
-
             f.seek(0); json.dump(data, f); f.truncate()
 
     try:
-        product_name = product_data['name']
+        update_status(status='processing')
         feed_folder = os.path.join(session_folder, 'feed')
         output_folder = os.path.join(session_folder, 'output')
-        os.makedirs(feed_folder, exist_ok=True)
-        os.makedirs(output_folder, exist_ok=True)
+        os.makedirs(feed_folder, exist_ok=True); os.makedirs(output_folder, exist_ok=True)
 
-        reference_image_paths = []
-        if 'image_paths' in product_data and product_data['image_paths']:
-            reference_image_paths = product_data['image_paths']
-        elif 'image_urls' in product_data and product_data['image_urls']:
-            for url in product_data['image_urls']:
-                img_path = download_image_from_url(url, feed_folder)
-                if img_path:
-                    reference_image_paths.append(img_path)
-                else:
-                    update_status(error_details={'product_name': product_name, 'source_url': url, 'message': 'Nie udało się pobrać obrazu.', 'step': 'download'})
+        with open(status_path, 'r') as f: status_data = json.load(f)
+        for product in status_data['products']:
+            product_name = product['name']
+            
+            reference_image_paths = []
+            if 'image_paths' in product and product['image_paths']:
+                reference_image_paths = product['image_paths']
+            elif 'image_urls' in product and product['image_urls']:
+                for url in product['image_urls']:
+                    img_path = download_image_from_url(url, feed_folder)
+                    if img_path:
+                        reference_image_paths.append(img_path)
+                    else:
+                        update_status(error_details={'product_name': product_name, 'source_url': url, 'message': 'Nie udało się pobrać obrazu.', 'step': 'download'})
 
-        if not reference_image_paths:
-            update_status(error_details={'product_name': product_name, 'message': 'Brak obrazów referencyjnych dla produktu.', 'step': 'ai_processing'})
-            update_status(processed_increment=1)
-            return
+            if not reference_image_paths:
+                update_status(error_details={'product_name': product_name, 'message': 'Brak obrazów referencyjnych dla produktu.', 'step': 'ai_processing'})
+                update_status(processed_increment=1)
+                continue
 
-        pil_images = []
-        for img_path in reference_image_paths:
-            with Image.open(img_path) as img:
-                img.thumbnail((1024, 1024))
-                pil_images.append(img.convert('RGB'))
+            try:
+                pil_images = []
+                for img_path in reference_image_paths:
+                    with Image.open(img_path) as img:
+                        img.thumbnail((1024, 1024))
+                        pil_images.append(img.convert('RGB'))
 
-        if not pil_images:
-            raise Exception("Nie udało się załadować żadnych obrazów PIL.")
+                if not pil_images:
+                    raise Exception("Nie udało się załadować żadnych obrazów PIL.")
 
-        safe_product_name = re.sub(r'[^\w\-_\.]', '', product_name)
-        final_prompts = analyze_product_for_two_prompts_xml(pil_images, product_name, styles)
+                safe_product_name = re.sub(r'[^\w\-_\.]', '', product_name)
+                final_prompts = analyze_product_for_two_prompts_xml(pil_images, product_name, styles)
 
-        for i, prompt in enumerate(final_prompts):
-            generated_image, filename = generate_gemini_image_sync(prompt, i, safe_product_name, pil_images, resolution, aspect_ratio)
-            if generated_image and filename:
-                generated_image.save(os.path.join(output_folder, filename))
+                print(f"⏳ Czekam 10 sekund po analizie tekstu dla '{product_name}'...")
+                time.sleep(10)
 
-        update_status(processed_increment=1)
+                for i, prompt in enumerate(final_prompts):
+                    generated_image, filename = generate_gemini_image_sync(prompt, i, safe_product_name, pil_images, resolution, aspect_ratio)
+                    if generated_image and filename:
+                        generated_image.save(os.path.join(output_folder, filename))
+                    
+                    print(f"⏳ Czekam 15 sekund po wygenerowaniu obrazu dla '{product_name}'...")
+                    time.sleep(15)
 
-    except exceptions.ResourceExhausted as e:
-        # Re-queue the job with a delay
-        retry_timestamp = time.time() + 30 # Retry after 30 seconds
-        redis_client.zadd(DELAYED_JOB_QUEUE_KEY, {json.dumps(job_details): retry_timestamp})
-        print(f"WORKER: Otrzymano błąd 429 dla produktu {product_name}. Zadanie zostało dodane do kolejki opóźnionej.")
+                update_status(processed_increment=1)
+            except Exception as e:
+                update_status(error_details={'product_name': product_name, 'message': str(e), 'step': 'ai_processing'})
+                update_status(processed_increment=1)
+
+        update_status(status='complete')
     except Exception as e:
-        update_status(error_details={'product_name': product_name, 'message': str(e), 'step': 'ai_processing'})
-        update_status(processed_increment=1)
-
+        update_status(status='failed', error_details={'message': str(e), 'step': 'general'})
 
 # ============== KOLEJKA ZADAŃ I WORKER (REDIS) =============
 # Używamy Redis jako scentralizowanej kolejki, aby działało z Gunicorn
@@ -438,7 +435,6 @@ def process_product_job(job_details):
 redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
 redis_client = redis.from_url(redis_url, decode_responses=True)
 JOB_QUEUE_KEY = "generation_job_queue"
-DELAYED_JOB_QUEUE_KEY = "delayed_job_queue"
 NUM_WORKERS = 2 # Używane w gunicorn.conf.py oraz dla trybu deweloperskiego
 
 def generation_worker():
@@ -446,95 +442,53 @@ def generation_worker():
     print("WORKER: Wątek workera został uruchomiony i nasłuchuje na zadania w Redis.")
     while True:
         try:
-            # === Krok A: Przenoszenie Zadań z Poczekalni ===
-            current_time = time.time()
-            # Get jobs ready for processing from the delayed queue
-            ready_jobs = redis_client.zrangebyscore(DELAYED_JOB_QUEUE_KEY, 0, current_time, withscores=False)
+            # blpop to blokujące wywołanie, które czeka na zadanie w liście Redis.
+            # Zwraca krotkę: (nazwa_klucza, wartosc_json)
+            _, job_json = redis_client.blpop(JOB_QUEUE_KEY)
+            
+            job_details = json.loads(job_json)
+            session_id = job_details.get('session_id')
+            
+            if not session_id:
+                print("WORKER ERROR: Otrzymano zadanie bez session_id. Odrzucam.")
+                continue
 
-            if ready_jobs:
-                for job_json_data in ready_jobs:
-                    # Move job from delayed queue to main queue
-                    redis_client.rpush(JOB_QUEUE_KEY, job_json_data)
-                    # Remove from delayed queue
-                    redis_client.zrem(DELAYED_JOB_QUEUE_KEY, job_json_data)
-                print(f"WORKER: Przeniesiono {len(ready_jobs)} zadań z kolejki opóźnionej do głównej.")
+            print(f"WORKER: Rozpoczynam przetwarzanie sesji {session_id}")
+            run_generation_for_session(
+                session_id, 
+                job_details.get('resolution'), 
+                job_details.get('aspect_ratio'), 
+                job_details.get('styles')
+            )
+            print(f"WORKER: Zakończono przetwarzanie sesji {session_id}")
 
-            # === Krok B: Przetwarzanie Zadań z Głównej Kolejki ===
-            result = redis_client.blpop(JOB_QUEUE_KEY, timeout=1)
-
-            if result:
-                _, job_json = result
-                job_details = json.loads(job_json)
-                session_id = job_details.get('session_id')
-
-                if not session_id:
-                    print("WORKER ERROR: Otrzymano zadanie bez session_id. Odrzucam.")
-                    continue
-
-                print(f"WORKER: Rozpoczynam przetwarzanie produktu dla sesji {session_id}")
-                # Now calling the new per-product processing function
-                process_product_job(job_details)
-                print(f"WORKER: Zakończono przetwarzanie produktu dla sesji {session_id}")
-            else:
-                # No jobs in main queue, timeout occurred, loop again to check delayed queue
-                pass
-
-        except exceptions.ResourceExhausted as e:
-            retry_timestamp = time.time() + 30 # Retry after 30 seconds
-            redis_client.zadd(DELAYED_JOB_QUEUE_KEY, {json.dumps(job_details): retry_timestamp})
-            print(f"WORKER: Otrzymano błąd 429 dla sesji {session_id}, produktu {job_details.get('product_data',{}).get('name', 'N/A')}. Zadanie zostało dodane do kolejki opóźnionej (retry_at: {datetime.fromtimestamp(retry_timestamp)}).")
         except Exception as e:
+            # W przypadku błędu (np. błąd połączenia z Redis), logujemy i próbujemy dalej
+            # Zapobiega to zatrzymaniu workera
             print(f"❌ KRYTYCZNY BŁĄD WORKERA: {e}")
-            pass
+            # Można dodać krótką przerwę, aby uniknąć gorącej pętli w przypadku ciągłych błędów
+            time.sleep(5)
 
 
 @app.route('/api/xml/generate', methods=['POST'])
 def xml_generate_creations():
     data = request.json
     session_id = data.get('session_id')
-    session_folder = os.path.join(TEMP_FOLDER, session_id)
-    status_path = os.path.join(session_folder, 'status.json')
-
-    if not session_id or not os.path.exists(session_folder):
+    if not session_id or not os.path.exists(os.path.join(TEMP_FOLDER, session_id)):
         return jsonify({'error': 'Nieprawidłowe ID sesji'}), 404
 
-    try:
-        with open(status_path, 'r') as f:
-            status_data = json.load(f)
+    # Tworzymy słownik z detalami zadania i serializujemy do JSON
+    job_details = {
+        'session_id': session_id,
+        'resolution': data.get('resolution'),
+        'aspect_ratio': data.get('aspect_ratio'),
+        'styles': data.get('styles')
+    }
+    
+    # Dodajemy zadanie do kolejki w Redis
+    redis_client.rpush(JOB_QUEUE_KEY, json.dumps(job_details))
 
-        products = status_data['products']
-        total_products_in_session = len(products)
-        products_added_to_queue = 0
-
-        # Update total_products in status_data, as it might have been modified by parse_xml_for_products_with_images
-        # The total_products now refers to the number of jobs created
-        status_data['total_products'] = total_products_in_session
-        status_data['status'] = 'queued' # New status: jobs are in queue
-        with open(status_path, 'w') as f:
-            json.dump(status_data, f)
-
-        for product_index, product_data in enumerate(products):
-            # Create a job for each individual product
-            product_job_details = {
-                'session_id': session_id,
-                'product_index': product_index, # Index to retrieve product_data from status.json later
-                'product_data': product_data, # Directly pass the product data for the worker
-                'resolution': data.get('resolution'),
-                'aspect_ratio': data.get('aspect_ratio'),
-                'styles': data.get('styles')
-            }
-            redis_client.rpush(JOB_QUEUE_KEY, json.dumps(product_job_details))
-            products_added_to_queue += 1
-
-        return jsonify({
-            'status': f'Dodano {products_added_to_queue} zadań do kolejki',
-            'session_id': session_id,
-            'total_products_queued': products_added_to_queue
-        })
-
-    except Exception as e:
-        return jsonify({'error': f'Błąd podczas dodawania zadań do kolejki: {e}'}), 500
-
+    return jsonify({'status': 'Zadanie zostało dodane do kolejki', 'session_id': session_id})
 
 @app.route('/api/xml/status/<session_id>', methods=['GET'])
 def get_xml_status(session_id):
